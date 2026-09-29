@@ -17,6 +17,8 @@ data:
 models:
 	$(VENV_PY) -m src.sentiment
 	$(VENV_PY) -m src.predict
+	$(VENV_PY) -m src.ahp
+	$(VENV_PY) -m src.discovery
 
 run:
 	$(VENV_PY) run_all.py

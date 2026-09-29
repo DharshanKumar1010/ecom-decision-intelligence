@@ -1,0 +1,110 @@
+# Seller recommendation rules (CLAUDE.md section 7.5).
+#
+# Every numeric threshold below is checked against the real distribution of
+# src/discovery.py's SellerFacts.parquet (2,970 sellers) from the last
+# pipeline run; see docs/knowledge_engineering.md for the exact percentiles
+# and the reasoning behind each cutoff. Priority ladder (highest wins on a
+# tie via ascending rule id): Suspend (100/98) > Feature (90/88) >
+# Promote (80/78) > Warn (70/68/66) > Keep (50/48) > default (1).
+#
+# R08 is the exact Promote rule from CLAUDE.md section 7.7.2
+# (avg_late_risk < 0.3). On the current model's predicted late_risk range
+# (observed min ~0.41 across sellers, since the deliberately small feature
+# set only weakly separates risk), this rule does not currently fire on any
+# real seller — it is kept verbatim because CLAUDE.md specifies it exactly,
+# and is exercised by a constructed fact set in tests/test_expert.py. R09 is
+# the second, realistic Promote variant that does fire on real data.
+
+- id: R01
+  priority: 100
+  if:
+    - {fact: avg_late_risk, op: ">", value: 0.53}
+    - {fact: avg_review, op: "<", value: 3.5}
+  then: Suspend
+  because: "Predicted late-delivery risk in the top quartile of sellers combined with average reviews below 3.5 — the combination CLAUDE.md's own example rule targets, thresholds set from this run's actual seller distribution."
+
+- id: R02
+  priority: 98
+  if:
+    - {fact: late_rate, op: ">", value: 0.4}
+    - {fact: order_volume, op: ">=", value: 10}
+  then: Suspend
+  because: "Over 40% of a seller's own orders arrived late, and there are enough orders (>=10) that this is not a fluke from one or two shipments."
+
+- id: R06
+  priority: 90
+  if:
+    - {fact: ahp_score, op: ">=", value: 0.789}
+    - {fact: avg_late_risk, op: "<", value: 0.503}
+  then: Feature
+  because: "AHP composite score in the top 10% of established sellers, with predicted late-delivery risk at or below the median — a proven, low-risk top performer worth featuring."
+
+- id: R07
+  priority: 88
+  if:
+    - {fact: avg_review, op: ">=", value: 4.3}
+    - {fact: order_volume, op: ">=", value: 83}
+  then: Feature
+  because: "High order volume (90th percentile or above) sustained alongside a strong average review (top quartile) — scale without sacrificing quality."
+
+- id: R08
+  priority: 80
+  if:
+    - {fact: is_hidden_gem, op: "==", value: true}
+    - {fact: avg_late_risk, op: "<", value: 0.3}
+  then: Promote
+  because: "Strong quality signals with low visibility and very low predicted late-delivery risk. A good candidate to feature and grow, not just rank by past volume."
+
+- id: R09
+  priority: 78
+  if:
+    - {fact: is_hidden_gem, op: "==", value: true}
+    - {fact: avg_late_risk, op: "<", value: 0.474}
+  then: Promote
+  because: "Hidden Gem quadrant member (high AHP quality, low order volume) with predicted late-delivery risk in the safer quartile of all sellers — the realistic Promote threshold given this model's predicted-risk range."
+
+- id: R03
+  priority: 70
+  if:
+    - {fact: avg_late_risk, op: ">", value: 0.55}
+  then: Warn
+  because: "Predicted late-delivery risk in roughly the top 10% of sellers on its own is a caution signal even without a confirmed review or volume problem yet."
+
+- id: R04
+  priority: 68
+  if:
+    - {fact: avg_review, op: "<", value: 3.5}
+    - {fact: order_volume, op: ">=", value: 5}
+  then: Warn
+  because: "Average review below 3.5 with enough orders (>=5) to be a real pattern rather than one bad review."
+
+- id: R05
+  priority: 66
+  if:
+    - {fact: late_rate, op: ">", value: 0.25}
+    - {fact: order_volume, op: ">=", value: 5}
+  then: Warn
+  because: "More than a quarter of a seller's own orders arrived late (90th-percentile territory), with enough orders to trust the rate."
+
+- id: R10
+  priority: 50
+  if:
+    - {fact: avg_late_risk, op: "<=", value: 0.503}
+    - {fact: avg_review, op: ">=", value: 4.27}
+    - {fact: order_volume, op: ">=", value: 5}
+  then: Keep
+  because: "At-or-below-median predicted risk, at-or-above-median reviews, and enough orders to be a real track record — no reason to change status."
+
+- id: R11
+  priority: 48
+  if:
+    - {fact: ahp_score, op: ">=", value: 0.604}
+    - {fact: late_rate, op: "<=", value: 0.10}
+  then: Keep
+  because: "AHP score above the bottom decile of established sellers and an actual late-delivery rate at or below the 75th percentile — a solidly average-or-better seller."
+
+- id: R12
+  priority: 1
+  if: []
+  then: Keep
+  because: "No rule with a stronger signal matched (often a very low order-volume seller); default to Keep pending more data rather than acting on weak evidence."

@@ -1,0 +1,37 @@
+|--- same_state <= 0.50
+|   |--- freight_value <= 13.77
+|   |   |--- freight_value <= 13.47
+|   |   |   |--- freight_value <= 9.32
+|   |   |   |   |--- class: 0
+|   |   |   |--- freight_value >  9.32
+|   |   |   |   |--- class: 0
+|   |   |--- freight_value >  13.47
+|   |   |   |--- product_weight_g <= 203.50
+|   |   |   |   |--- class: 0
+|   |   |   |--- product_weight_g >  203.50
+|   |   |   |   |--- class: 0
+|   |--- freight_value >  13.77
+|   |   |--- product_weight_g <= 10237.50
+|   |   |   |--- freight_value <= 15.57
+|   |   |   |   |--- class: 1
+|   |   |   |--- freight_value >  15.57
+|   |   |   |   |--- class: 1
+|   |   |--- product_weight_g >  10237.50
+|   |   |   |--- freight_value <= 237.47
+|   |   |   |   |--- class: 1
+|   |   |   |--- freight_value >  237.47
+|   |   |   |   |--- class: 0
+|--- same_state >  0.50
+|   |--- price <= 1.70
+|   |   |--- class: 1
+|   |--- price >  1.70
+|   |   |--- product_weight_g <= 10446.50
+|   |   |   |--- freight_value <= 7.09
+|   |   |   |   |--- class: 0
+|   |   |   |--- freight_value >  7.09
+|   |   |   |   |--- class: 0
+|   |   |--- product_weight_g >  10446.50
+|   |   |   |--- freight_value <= 19.83
+|   |   |   |   |--- class: 0
+|   |   |   |--- freight_value >  19.83
+|   |   |   |   |--- class: 1

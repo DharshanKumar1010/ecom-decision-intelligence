@@ -17,7 +17,7 @@ strict = true
 exclude = ["^app/", "^\\.venv/"]
 
 [[tool.mypy.overrides]]
-module = ["pandas.*", "pyarrow.*"]
+module = ["pandas.*", "pyarrow.*", "sklearn.*", "joblib.*", "vaderSentiment.*", "yaml.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

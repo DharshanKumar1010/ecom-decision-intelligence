@@ -35,6 +35,10 @@ function Invoke-Models {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $VenvPython -m src.predict
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $VenvPython -m src.ahp
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $VenvPython -m src.discovery
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
 function Invoke-Run {

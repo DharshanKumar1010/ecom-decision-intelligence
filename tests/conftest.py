@@ -48,3 +48,14 @@ def dim_product() -> pd.DataFrame:
     if not path.exists():
         build_tables.main()
     return pd.read_parquet(path)
+
+
+@pytest.fixture(scope="session")
+def dim_customer() -> pd.DataFrame:
+    """Load DimCustomer, building it first if needed. Skips if raw data is absent."""
+    if not _raw_data_available():
+        pytest.skip("raw data not available in data/raw/")
+    path = config.PROCESSED_DATA_DIR / "DimCustomer.parquet"
+    if not path.exists():
+        build_tables.main()
+    return pd.read_parquet(path)
