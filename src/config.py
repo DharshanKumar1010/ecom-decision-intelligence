@@ -21,6 +21,7 @@ PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
 DATA_DIR: Path = PROJECT_ROOT / "data"
 RAW_DATA_DIR: Path = DATA_DIR / "raw"
 PROCESSED_DATA_DIR: Path = DATA_DIR / "processed"
+EXPORT_DATA_DIR: Path = DATA_DIR / "export"
 REPORTS_DIR: Path = PROJECT_ROOT / "reports"
 MODELS_DIR: Path = PROJECT_ROOT / "models"
 RULES_DIR: Path = PROJECT_ROOT / "rules"

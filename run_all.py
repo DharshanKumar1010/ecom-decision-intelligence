@@ -1,11 +1,17 @@
-"""Run the full Stage 1 + Stage 2 pipeline in order and print a summary
-(CLAUDE.md section 9).
+"""Run the full Stage 1 + Stage 2 + Stage 3 pipeline in order and print a
+summary (CLAUDE.md section 9).
 
 Stages: build_tables -> synthetic -> clickstream sanity checks -> sentiment
 -> predict -> ahp -> discovery -> expert. Each stage is timed and logged;
 the pipeline stops on the first failure (no exception is swallowed). After
 the pipeline, `pytest`, `ruff check .`, and `mypy src` are run as
 subprocesses and their pass/fail status is included in the final summary.
+
+The Stage 3 CSV export (`src.export_sql`) is OPT-IN via `--export`, not part
+of the default sequence — CLAUDE.md's working agreement requires
+confirmation before changing run_all.py's default behavior, and the user's
+own Stage 3 instructions asked for the export step to be added as "a final
+optional step." Default behavior (no flag) is unchanged from Stage 2.
 
 Every number in the final summary is read back from a file a stage just
 wrote (or, for the AHP consistency ratio, recomputed via `ahp.compute_weights`
@@ -16,6 +22,7 @@ only module allowed to use bare `print` (the final summary table).
 
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import sys
@@ -27,7 +34,17 @@ from typing import Any
 import pandas as pd
 import pyarrow.parquet as pq
 
-from src import ahp, build_tables, clickstream, discovery, expert, predict, sentiment, synthetic
+from src import (
+    ahp,
+    build_tables,
+    clickstream,
+    discovery,
+    expert,
+    export_sql,
+    predict,
+    sentiment,
+    synthetic,
+)
 from src.config import (
     AHP_PAIRWISE_MATRIX,
     PROCESSED_DATA_DIR,
@@ -120,6 +137,14 @@ def _row_count(path: Path) -> int:
 
 def main() -> None:
     """Run every pipeline stage in order, then the quality gates, then print the summary."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--export",
+        action="store_true",
+        help="also run src.export_sql at the end, writing data/export/*.csv for SQL Server import",
+    )
+    args = parser.parse_args()
+
     stages: list[tuple[str, Callable[[], None]]] = [
         ("build_tables", build_tables.main),
         ("synthetic", synthetic.main),
@@ -134,6 +159,13 @@ def main() -> None:
     timings: dict[str, float] = {}
     for name, fn in stages:
         timings[name] = _run_stage(name, fn)
+
+    export_row_counts: dict[str, int] | None = None
+    if args.export:
+        export_start = time.perf_counter()
+        export_row_counts = export_sql.main()
+        timings["export_sql"] = time.perf_counter() - export_start
+        logger.info("Finished stage: export_sql (%.2fs)", timings["export_sql"])
 
     gates = {
         "pytest": _run_quality_gate("pytest", [sys.executable, "-m", "pytest", "-q"]),
@@ -152,7 +184,7 @@ def main() -> None:
     quadrant_counts = quadrants["quadrant"].value_counts().to_dict()
 
     print("\n" + "=" * 72)
-    print("STAGE 1 + STAGE 2 PIPELINE SUMMARY")
+    print("STAGE 1 + STAGE 2 + STAGE 3 PIPELINE SUMMARY")
     print("=" * 72)
 
     print("\nStage timings:")
@@ -175,6 +207,11 @@ def main() -> None:
     print("\nDiscovery quadrant counts:")
     for label in ("Star", "Hidden Gem", "Overrated", "Overlooked-Low-Quality"):
         print(f"  {label:<25s} {quadrant_counts.get(label, 0)}")
+
+    if export_row_counts is not None:
+        print("\nSQL Server CSV export (data/export/):")
+        for name, count in export_row_counts.items():
+            print(f"  {name:<30s} {count}")
 
     print("\nQuality gates:")
     for name, passed in gates.items():

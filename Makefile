@@ -1,4 +1,4 @@
-.PHONY: setup data models run app test lint check
+.PHONY: setup data models export run app test lint check
 
 VENV_PY := .venv/bin/python
 ifeq ($(OS),Windows_NT)
@@ -19,6 +19,9 @@ models:
 	$(VENV_PY) -m src.predict
 	$(VENV_PY) -m src.ahp
 	$(VENV_PY) -m src.discovery
+
+export:
+	$(VENV_PY) -m src.export_sql
 
 run:
 	$(VENV_PY) run_all.py

@@ -7,7 +7,7 @@
 #>
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("setup", "data", "models", "run", "app", "test", "lint", "check")]
+    [ValidateSet("setup", "data", "models", "export", "run", "app", "test", "lint", "check")]
     [string]$Task
 )
 
@@ -38,6 +38,11 @@ function Invoke-Models {
     & $VenvPython -m src.ahp
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $VenvPython -m src.discovery
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
+function Invoke-Export {
+    & $VenvPython -m src.export_sql
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
@@ -72,6 +77,7 @@ switch ($Task) {
     "setup"  { Invoke-Setup }
     "data"   { Invoke-Data }
     "models" { Invoke-Models }
+    "export" { Invoke-Export }
     "run"    { Invoke-Run }
     "app"    { Invoke-App }
     "test"   { Invoke-Test }
