@@ -142,30 +142,131 @@ R09" narrative already built into this doc, `BUILD_LOG.md`, and
 `CLAUDE.md` for no real benefit — reusing R09's id for its recalibrated
 role keeps that continuity intact.
 
-**Known, disclosed limitation — NOT fixed in this pass:** R01, R03, R06,
-and R10 also key off `avg_late_risk`, with thresholds (0.53, 0.55, 0.503)
-calibrated against the old LR distribution (median ~0.5). Checked against
-the table above, RF's real median is 0.106 — meaning R06's/R10's "median
-risk" condition (`< 0.503` / `<= 0.503`) is no longer close to the median
-at all (0.503 sits around the **96th-97th percentile** of the real RF
-distribution), and R01's/R03's "top quartile/decile risk" conditions
-(`> 0.53` / `> 0.55`) now correspond to roughly the **top 2-3%**, not
-25%/10%. These rules still function (checked: R01 combo -> 55 real
-sellers, R03 -> 78, R06 combo -> 187, R10 combo -> 815 — none are
-vacuous), but their percentile framing in section 6 below is now
-inaccurate and was not recalibrated as part of this change, since it was
-out of scope for "recalibrate R08/R09." Flagged in `CLAUDE.md` section 18
-as follow-up work.
+**Follow-up closed out (was flagged here as a known limitation, now fixed
+— see section 5b):** R01, R03, R06, and R10 also key off `avg_late_risk`
+and were recalibrated in a second pass, the same day, once it was clear
+the staleness wasn't limited to R08/R09. R02, R05, and R11 key off
+`late_rate` (the empirical, model-independent rate) and were checked and
+confirmed NOT stale — see section 5b for the full, rule-by-rule rigor.
+
+## 5b. Second recalibration pass: R01, R03, R06, R10 (`avg_late_risk`), and confirming R02/R05/R11 (`late_rate`) are unaffected
+
+**Step 1 — for every rule referencing `avg_late_risk` or `late_rate`,
+determine whether its number was originally a PERCENTILE reference or a
+fixed real-world threshold**, checked against each rule's own `because`
+text and this doc's original justification (not assumed):
+
+| Rule | Fact | Original threshold | Original intent (from its own justification text) | Percentile or fixed? |
+|---|---|---|---|---|
+| R01 | `avg_late_risk` | `> 0.53` | "top-quartile risk signal... thresholds set from this run's actual seller distribution" | **Percentile** (~75th) |
+| R02 | `late_rate` | `> 0.4` | "an empirical late rate above 40% is a severe, directly-observed failure" | **Fixed** (40% lateness is severe on its own terms, not framed against a percentile) |
+| R03 | `avg_late_risk` | `> 0.55` | "roughly the top 10% of sellers... deliberately set higher than R01's" | **Percentile** (~90th) |
+| R05 | `late_rate` | `> 0.25` | "more than a quarter of a seller's own orders (90th-percentile territory)" | **Percentile** (~90th) |
+| R06 | `avg_late_risk` | `< 0.503` | "at or below the median" | **Percentile** (median) |
+| R10 | `avg_late_risk` | `<= 0.503` | "at-or-below-median predicted risk" | **Percentile** (median) |
+| R11 | `late_rate` | `<= 0.10` | "at or below the 75th percentile" | **Percentile** (75th) |
+
+R04, R07, R12 don't reference `avg_late_risk` or `late_rate` at all (R04/R07
+use `avg_review`/`order_volume`; R12 is the unconditional default) — not
+applicable, confirmed by inspection, not touched.
+
+**Step 2 — recompute the real percentile of each threshold against the
+CURRENT distribution, using the correct reference population.** For R01,
+R03, R06, R10 (`avg_late_risk`) the population is all 2,970 sellers (none
+of these rules restrict to a sub-population the way R08/R09's
+`is_hidden_gem` gate does — R06 additionally requires `ahp_score >= 0.789`,
+but its own original justification computed "median" against ALL sellers,
+not the top-decile-quality subset, so that convention is preserved here).
+For R02, R05, R11 (`late_rate`) the population is also all 2,970 sellers.
+
+`avg_late_risk`, all 2,970 sellers, exact percentiles:
+
+| Percentile | avg_late_risk |
+|---|---|
+| 25th | 0.0633 |
+| 50th (median) | 0.1059 |
+| 75th | 0.1780 |
+| 90th | 0.2900 |
+| 95th | 0.4135 |
+
+Old thresholds' real percentile under the CURRENT (RandomForest)
+distribution — this is the actual drift, measured, not assumed:
+
+| Rule | Old threshold | Real percentile now | Intended percentile |
+|---|---|---|---|
+| R01 | 0.53 | **96.97th** | ~75th |
+| R03 | 0.55 | **97.37th** | ~90th |
+| R06 | 0.503 | **96.63rd** | 50th (median) |
+| R10 | 0.503 | **96.63rd** | 50th (median) |
+
+`late_rate`, all 2,970 sellers — confirmed UNCHANGED (this quantity is
+`FactOrderItems.groupby("seller_id")["is_late"].mean()`, purely empirical,
+computed identically regardless of which model produces `late_risk`):
+
+| Rule | Threshold | Real percentile (unchanged) | Intended percentile |
+|---|---|---|---|
+| R02 | 0.4 (fixed, not percentile-intent) | 95.4th | n/a — the 40% figure was never meant to track a percentile |
+| R05 | 0.25 | 91.25th | ~90th (matches within normal sample-to-sample rounding) |
+| R11 | 0.10 | 75.35th | ~75th (matches) |
+
+**Step 3 — decide and apply.** R01, R03, R06, R10 had clear percentile
+intent (Step 1) and drifted to the ~97th percentile (Step 2) — recalibrated
+back to their ORIGINAL intended percentile against the real current
+distribution:
+- **R01**: `0.53` -> **`0.178`** (real 75th percentile).
+- **R03**: `0.55` -> **`0.29`** (real 90th percentile).
+- **R06**, **R10**: `0.503` -> **`0.106`** (real median).
+
+R02 was never percentile-intent (a fixed "40% is severe" business
+threshold) — left unchanged. R05, R11 are percentile-intent but their real
+percentiles (91.25th, 75.35th) already match their original design intent
+within normal rounding — confirmed accurate, left unchanged, nothing to
+fix.
+
+**Step 4 — real fire-count table, before this pass vs. after** (from the
+actual `rule_id` column of `reports/seller_recommendations.csv`, i.e. how
+many sellers this rule specifically was the ONE THAT FIRED for, after
+priority resolution — not the raw condition-match count):
+
+| Rule | Action | Before (stale thresholds) | After (recalibrated) |
+|---|---|---|---|
+| R01 | Suspend | 55 | 165 |
+| R02 | Suspend | 5 | 2 |
+| R03 | Warn | 25 | 180 |
+| R04 | Warn | 164 | 85 |
+| R05 | Warn | 55 | 5 |
+| R06 | Feature | 187 | 164 |
+| R07 | Feature | 69 | 69 |
+| R08 | Promote | 257 | 272 |
+| R09 | Promote | 58 | 58 |
+| R10 | Keep | 300 | 104 |
+| R11 | Keep | 489 | 607 |
+| R12 (default) | Keep | 1,306 | 1,259 |
+
+R02/R05/R11's fire counts changed too (5->2, 55->5, 489->607) even though
+THEIR thresholds didn't move — this is the expected, correct consequence
+of R01/R03/R06/R10 becoming much easier to satisfy (e.g. R01's threshold
+loosened from the 97th to the 75th percentile), which lets those
+higher-priority rules now catch sellers that used to fall through to
+R02/R04/R05/R11/R12. Not evidence R02/R05/R11 are themselves miscalibrated
+— confirmed separately in Step 2/3 above.
+
+Action-level totals: Keep 2,095 -> 1,970; Promote 315 -> 330 (R08/R09
+untouched in this pass — this small change is the same cascading effect,
+sellers no longer reaching R08/R09 because a higher-priority Suspend/Warn
+rule now catches them first); Feature 256 -> 233; Warn 244 -> 270;
+Suspend 60 -> 167.
 
 ## 6. Remaining expert-system rule thresholds (`rules/seller_rules.yaml`)
 
-**Note on staleness:** the `avg_late_risk`-dependent rows below (R01, R03,
-R06, R10) were computed against the Stage 2/3 LR model's distribution and
-were NOT recalibrated when Stage 3.5 adopted RandomForest — see section 5's
-"known, disclosed limitation" note for the real, current match counts
-against RF's distribution (R01: 55, R03: 78, R06: 187, R10: 815, vs. the
-stale numbers quoted below). The rules still fire and aren't vacuous, but
-their percentile framing here is outdated.
+**All thresholds below are current as of the Stage 3.5 recalibration
+(section 5, section 5b)** — R08/R09 use RandomForest-Hidden-Gem-specific
+percentiles; R01/R03/R06/R10 use RandomForest-all-sellers percentiles;
+R02/R05/R11 use the unchanged empirical `late_rate` distribution. The
+"Real matches" column below reflects the OLD LR-era pipeline run for rules
+not affected by this doc's two recalibration passes' re-verification —
+where a rule WAS recalibrated, see section 5/5b for the current real count
+instead (R01: 165, R03: 180, R06: 164, R08: 272, R09: 58, R10: 104).
 
 All checked against the same `SellerFacts.parquet` run (2,970 sellers;
 `avg_review` percentiles: min 1.0, 10th 3.2, 25th 3.90, 50th 4.27, 75th 4.70,

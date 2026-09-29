@@ -38,14 +38,29 @@
 # higher-priority R09 fires and its more specific "because" rationale is
 # what's shown -- R08 only ends up firing (and being reported) for the
 # broader band between the two thresholds.
+#
+# R01/R03/R06/R10 recalibration (second pass, same Stage 3.5 model change):
+# these four also reference avg_late_risk, and their thresholds (0.53, 0.55,
+# 0.503) were calibrated against the old LR distribution as PERCENTILES
+# (~75th, ~90th, median -- confirmed from each rule's own "because" text
+# and docs/knowledge_engineering.md's original justification, not assumed),
+# not fixed real-world risk levels. Recalibrated to the SAME percentiles
+# against RandomForest's real distribution: R01 -> 0.178 (75th pct), R03 ->
+# 0.29 (90th pct), R06/R10 -> 0.106 (median). Priorities are untouched --
+# only the calibration point moved, not each rule's relative severity.
+# R02/R05/R11 reference late_rate (the EMPIRICAL is_late rate), not
+# avg_late_risk (the PREDICTED risk) -- late_rate never depended on which
+# model produces predictions, so their thresholds were checked and
+# confirmed still accurate, not touched. See docs/knowledge_engineering.md
+# for the full percentile check across all twelve rules.
 
 - id: R01
   priority: 100
   if:
-    - {fact: avg_late_risk, op: ">", value: 0.53}
+    - {fact: avg_late_risk, op: ">", value: 0.178}
     - {fact: avg_review, op: "<", value: 3.5}
   then: Suspend
-  because: "Predicted late-delivery risk in the top quartile of sellers combined with average reviews below 3.5 — the combination CLAUDE.md's own example rule targets, thresholds set from this run's actual seller distribution."
+  because: "Predicted late-delivery risk in the top quartile of sellers (recalibrated to RandomForest's real 75th percentile) combined with average reviews below 3.5 — the combination CLAUDE.md's own example rule targets."
 
 - id: R02
   priority: 98
@@ -59,9 +74,9 @@
   priority: 90
   if:
     - {fact: ahp_score, op: ">=", value: 0.789}
-    - {fact: avg_late_risk, op: "<", value: 0.503}
+    - {fact: avg_late_risk, op: "<", value: 0.106}
   then: Feature
-  because: "AHP composite score in the top 10% of established sellers, with predicted late-delivery risk at or below the median — a proven, low-risk top performer worth featuring."
+  because: "AHP composite score in the top 10% of established sellers, with predicted late-delivery risk at or below the median (recalibrated to RandomForest's real median) — a proven, low-risk top performer worth featuring."
 
 - id: R07
   priority: 88
@@ -90,9 +105,9 @@
 - id: R03
   priority: 70
   if:
-    - {fact: avg_late_risk, op: ">", value: 0.55}
+    - {fact: avg_late_risk, op: ">", value: 0.29}
   then: Warn
-  because: "Predicted late-delivery risk in roughly the top 10% of sellers on its own is a caution signal even without a confirmed review or volume problem yet."
+  because: "Predicted late-delivery risk in roughly the top 10% of sellers (recalibrated to RandomForest's real 90th percentile) on its own is a caution signal even without a confirmed review or volume problem yet."
 
 - id: R04
   priority: 68
@@ -113,11 +128,11 @@
 - id: R10
   priority: 50
   if:
-    - {fact: avg_late_risk, op: "<=", value: 0.503}
+    - {fact: avg_late_risk, op: "<=", value: 0.106}
     - {fact: avg_review, op: ">=", value: 4.27}
     - {fact: order_volume, op: ">=", value: 5}
   then: Keep
-  because: "At-or-below-median predicted risk, at-or-above-median reviews, and enough orders to be a real track record — no reason to change status."
+  because: "At-or-below-median predicted risk (recalibrated to RandomForest's real median), at-or-above-median reviews, and enough orders to be a real track record — no reason to change status."
 
 - id: R11
   priority: 48

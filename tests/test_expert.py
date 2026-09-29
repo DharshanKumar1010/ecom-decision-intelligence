@@ -94,7 +94,9 @@ def test_promote_fires_via_r09_for_very_low_risk_hidden_gem(engine: InferenceEng
 
 def test_keep_fires_via_default_rule_for_sparse_seller(engine: InferenceEngine) -> None:
     facts = WorkingMemory(
-        seller_id="quiet", ahp_score=None, avg_late_risk=0.50, avg_review=None,
+        # avg_late_risk kept below R03's 0.29 Warn threshold so this fixture
+        # isolates the default rule rather than accidentally matching R03.
+        seller_id="quiet", ahp_score=None, avg_late_risk=0.15, avg_review=None,
         order_volume=2, late_rate=0.0, is_hidden_gem=False,
     ).as_facts()
     result = engine.run(facts)
@@ -206,6 +208,53 @@ def test_promote_rules_remain_discriminating_among_real_hidden_gems(
         ).mean()
         assert 0.0 < match_rate < 1.0, (
             f"{rule_id} fires on {match_rate:.1%} of real Hidden Gems -- "
+            "not discriminating (0% or 100%); its threshold likely needs "
+            "recalibrating against the current model's late_risk distribution."
+        )
+
+
+def test_percentile_calibrated_rules_remain_discriminating_among_all_sellers(
+    engine: InferenceEngine,
+) -> None:
+    """Same drift guard as the Hidden-Gem Promote check, for the other six
+    rules whose thresholds were calibrated against a PERCENTILE of
+    avg_late_risk or late_rate over ALL sellers (see
+    docs/knowledge_engineering.md section 5b for which rules are
+    percentile-intent vs. fixed-threshold-intent -- R02 is deliberately
+    excluded here since its 40% late_rate threshold is a fixed severity
+    threshold by design, not a percentile, and a near-0% fire rate is its
+    correct, intended behavior, not drift).
+
+    R01/R03/R06/R10 (avg_late_risk) drifted to the ~97th percentile when
+    RandomForest replaced LogisticRegression as primary and were
+    recalibrated; R05/R11 (late_rate, empirical and model-independent) were
+    checked and found not to have drifted. This test guards all six against
+    future drift the same way, using the REAL current data, not a fixture.
+    """
+    seller_facts_path = PROCESSED_DATA_DIR / "SellerFacts.parquet"
+    if not seller_facts_path.exists():
+        pytest.skip("data/processed/SellerFacts.parquet not available; run run_all.py first")
+
+    seller_facts = pd.read_parquet(seller_facts_path)
+    assert len(seller_facts) > 0
+
+    rules_by_id = {rule.id: rule for rule in engine.knowledge_base.rules}
+    for rule_id in ("R01", "R03", "R05", "R06", "R10", "R11"):
+        rule = rules_by_id[rule_id]
+        match_rate = seller_facts.apply(
+            lambda row, r=rule: r.matches(
+                {
+                    "ahp_score": None if pd.isna(row["ahp_score"]) else row["ahp_score"],
+                    "avg_late_risk": row["avg_late_risk"],
+                    "avg_review": None if pd.isna(row["avg_review"]) else row["avg_review"],
+                    "order_volume": row["order_volume"],
+                    "late_rate": row["late_rate"],
+                }
+            ),
+            axis=1,
+        ).mean()
+        assert 0.0 < match_rate < 1.0, (
+            f"{rule_id} fires on {match_rate:.1%} of all real sellers -- "
             "not discriminating (0% or 100%); its threshold likely needs "
             "recalibrating against the current model's late_risk distribution."
         )
