@@ -23,16 +23,16 @@
 |   |   |   |   |--- class: 1
 |--- order_month >  3.50
 |   |--- order_month <= 10.50
-|   |   |--- seller_historical_late_rate <= 0.05
-|   |   |   |--- n_items_in_order <= 20.50
+|   |   |--- geo_distance <= 1406.24
+|   |   |   |--- geo_distance <= 113.41
 |   |   |   |   |--- class: 0
-|   |   |   |--- n_items_in_order >  20.50
-|   |   |   |   |--- class: 1
-|   |   |--- seller_historical_late_rate >  0.05
-|   |   |   |--- order_month <= 7.50
+|   |   |   |--- geo_distance >  113.41
 |   |   |   |   |--- class: 0
-|   |   |   |--- order_month >  7.50
+|   |   |--- geo_distance >  1406.24
+|   |   |   |--- order_month <= 4.50
 |   |   |   |   |--- class: 1
+|   |   |   |--- order_month >  4.50
+|   |   |   |   |--- class: 0
 |   |--- order_month >  10.50
 |   |   |--- freight_value <= 14.10
 |   |   |   |--- order_month <= 11.50

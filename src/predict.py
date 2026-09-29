@@ -34,6 +34,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import joblib
+import numpy as np
 import pandas as pd
 from sklearn.impute import SimpleImputer
 from sklearn.inspection import permutation_importance
@@ -64,7 +65,136 @@ _TARGET = "is_late"
 _PRECOMPUTED_FEATURES: tuple[str, ...] = ("price", "freight_value", "product_weight_g",
                                            "same_state", "order_month", "day_of_week",
                                            "n_items_in_order", "payment_installments",
-                                           "seller_historical_late_rate")
+                                           "seller_historical_late_rate", "geo_distance",
+                                           "geo_distance_missing")
+
+
+def _aggregate_geo_centroids(geo: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate raw geolocation rows to one median lat/lng centroid per zip prefix.
+
+    Centroid = MEDIAN lat/lng within each zip_code_prefix — more robust to
+    occasional outlier/bad geocodes in this crowd-sourced data than a mean.
+
+    Args:
+        geo: raw geolocation rows with columns `geolocation_zip_code_prefix`,
+            `geolocation_lat`, `geolocation_lng`.
+
+    Returns:
+        DataFrame with columns `zip_prefix`, `lat`, `lng`.
+    """
+    return (
+        geo.groupby("geolocation_zip_code_prefix")[["geolocation_lat", "geolocation_lng"]]
+        .median()
+        .reset_index()
+        .rename(
+            columns={
+                "geolocation_zip_code_prefix": "zip_prefix",
+                "geolocation_lat": "lat",
+                "geolocation_lng": "lng",
+            }
+        )
+    )
+
+
+def _load_geo_centroids() -> pd.DataFrame:
+    """Load raw geolocation and aggregate via `_aggregate_geo_centroids`.
+
+    Returns:
+        DataFrame with columns `zip_prefix`, `lat`, `lng`.
+    """
+    geo = pd.read_csv(
+        RAW_DATA_DIR / "olist_geolocation_dataset.csv",
+        usecols=["geolocation_zip_code_prefix", "geolocation_lat", "geolocation_lng"],
+    )
+    return _aggregate_geo_centroids(geo)
+
+
+def _load_seller_customer_zips() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load seller/customer zip-code prefixes directly from the raw CSVs.
+
+    Not read via `build_tables.py`, which doesn't ingest these columns into
+    DimSeller/DimCustomer — see the module docstring.
+
+    Returns:
+        `(seller_zips, customer_zips)`: DataFrames with columns
+        (`seller_id`, `seller_zip_prefix`) and (`customer_id`,
+        `customer_zip_prefix`) respectively.
+    """
+    seller_zips = pd.read_csv(
+        RAW_DATA_DIR / "olist_sellers_dataset.csv",
+        usecols=["seller_id", "seller_zip_code_prefix"],
+    ).rename(columns={"seller_zip_code_prefix": "seller_zip_prefix"})
+    customer_zips = pd.read_csv(
+        RAW_DATA_DIR / "olist_customers_dataset.csv",
+        usecols=["customer_id", "customer_zip_code_prefix"],
+    ).rename(columns={"customer_zip_code_prefix": "customer_zip_prefix"})
+    return seller_zips, customer_zips
+
+
+def _haversine_km(
+    lat1: pd.Series, lng1: pd.Series, lat2: pd.Series, lng2: pd.Series
+) -> pd.Series:
+    """Vectorized great-circle distance in kilometers.
+
+    Args:
+        lat1, lng1, lat2, lng2: coordinate series in decimal degrees, same
+            index and length.
+
+    Returns:
+        Distance in kilometers, aligned to `lat1`'s index; `NaN` wherever
+        any input is `NaN`.
+    """
+    earth_radius_km = 6371.0
+    lat1_rad, lng1_rad = np.radians(lat1), np.radians(lng1)
+    lat2_rad, lng2_rad = np.radians(lat2), np.radians(lng2)
+    dlat = lat2_rad - lat1_rad
+    dlng = lng2_rad - lng1_rad
+    a = np.sin(dlat / 2) ** 2 + np.cos(lat1_rad) * np.cos(lat2_rad) * np.sin(dlng / 2) ** 2
+    return pd.Series(earth_radius_km * 2 * np.arcsin(np.sqrt(a)), index=lat1.index)
+
+
+def compute_geo_distance(
+    fact: pd.DataFrame,
+    geo_centroids: pd.DataFrame,
+    seller_zips: pd.DataFrame,
+    customer_zips: pd.DataFrame,
+) -> pd.DataFrame:
+    """Haversine distance between each item's seller and customer zip centroids.
+
+    A seller or customer zip prefix with no geolocation match (7 of 2,246
+    seller zips, 157 of 14,994 customer zips in the real data) is never
+    silently dropped: `geo_distance` is left `NaN` for the pipeline's
+    train-median imputer, and `geo_distance_missing` flags it explicitly —
+    the same "don't drop, impute and flag" pattern used elsewhere.
+
+    Args:
+        fact: FactOrderItems (must contain item_key, seller_id, customer_id).
+        geo_centroids: output of `_load_geo_centroids`.
+        seller_zips: first element of `_load_seller_customer_zips`.
+        customer_zips: second element of `_load_seller_customer_zips`.
+
+    Returns:
+        DataFrame with columns `item_key`, `geo_distance`, `geo_distance_missing`.
+    """
+    table = fact[["item_key", "seller_id", "customer_id"]].merge(
+        seller_zips, on="seller_id", how="left"
+    )
+    table = table.merge(customer_zips, on="customer_id", how="left")
+
+    seller_coords = geo_centroids.rename(
+        columns={"zip_prefix": "seller_zip_prefix", "lat": "seller_lat", "lng": "seller_lng"}
+    )
+    customer_coords = geo_centroids.rename(
+        columns={"zip_prefix": "customer_zip_prefix", "lat": "customer_lat", "lng": "customer_lng"}
+    )
+    table = table.merge(seller_coords, on="seller_zip_prefix", how="left")
+    table = table.merge(customer_coords, on="customer_zip_prefix", how="left")
+
+    table["geo_distance"] = _haversine_km(
+        table["seller_lat"], table["seller_lng"], table["customer_lat"], table["customer_lng"]
+    )
+    table["geo_distance_missing"] = table["geo_distance"].isna().astype(float)
+    return table[["item_key", "geo_distance", "geo_distance_missing"]]
 
 
 def compute_seller_historical_late_rate(fact: pd.DataFrame) -> pd.DataFrame:
@@ -161,6 +291,9 @@ def build_feature_table(
     dim_seller: pd.DataFrame,
     dim_customer: pd.DataFrame,
     payments: pd.DataFrame,
+    geo_centroids: pd.DataFrame,
+    seller_zips: pd.DataFrame,
+    customer_zips: pd.DataFrame,
 ) -> pd.DataFrame:
     """Assemble the modeling table: item_key, precomputed features, is_late.
 
@@ -179,6 +312,7 @@ def build_feature_table(
     `_load_payments`) on `order_id`; an order absent from the raw payments
     file is left `NaN`, for the pipeline's train-median imputer.
     `seller_historical_late_rate` comes from `compute_seller_historical_late_rate`.
+    `geo_distance`/`geo_distance_missing` come from `compute_geo_distance`.
 
     Args:
         fact: FactOrderItems (must contain item_key, order_id, seller_id,
@@ -189,6 +323,9 @@ def build_feature_table(
         dim_seller: DimSeller (must contain seller_id, seller_state).
         dim_customer: DimCustomer (must contain customer_id, customer_state).
         payments: output of `_load_payments` (order_id, payment_installments).
+        geo_centroids: output of `_load_geo_centroids`.
+        seller_zips: first element of `_load_seller_customer_zips`.
+        customer_zips: second element of `_load_seller_customer_zips`.
 
     Returns:
         DataFrame with `item_key`, every precomputable feature in
@@ -218,6 +355,11 @@ def build_feature_table(
     table = table.merge(payments, on="order_id", how="left")
     table["payment_installments"] = table["payment_installments"].astype(float)
     table = table.merge(compute_seller_historical_late_rate(fact), on="item_key", how="left")
+    table = table.merge(
+        compute_geo_distance(fact, geo_centroids, seller_zips, customer_zips),
+        on="item_key",
+        how="left",
+    )
 
     result = table[["item_key", *_PRECOMPUTED_FEATURES, "product_category", "is_late"]].copy()
 
@@ -418,8 +560,13 @@ def main() -> None:
     dim_seller = pd.read_parquet(PROCESSED_DATA_DIR / "DimSeller.parquet")
     dim_customer = pd.read_parquet(PROCESSED_DATA_DIR / "DimCustomer.parquet")
     payments = _load_payments()
+    geo_centroids = _load_geo_centroids()
+    seller_zips, customer_zips = _load_seller_customer_zips()
 
-    table = build_feature_table(fact, dim_product, dim_seller, dim_customer, payments)
+    table = build_feature_table(
+        fact, dim_product, dim_seller, dim_customer, payments,
+        geo_centroids, seller_zips, customer_zips,
+    )
     x_train, x_test, y_train, y_test, category_freq_map = _split_and_encode(table)
     logger.info("Train/test split: %d / %d rows, base rate %.4f%%", len(x_train), len(x_test),
                 float(y_test.mean()) * 100)

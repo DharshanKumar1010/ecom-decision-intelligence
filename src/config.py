@@ -113,6 +113,8 @@ ALLOWED_FEATURES: tuple[str, ...] = (
     "n_items_in_order",
     "payment_installments",
     "seller_historical_late_rate",
+    "geo_distance",
+    "geo_distance_missing",
 )
 
 # --------------------------------------------------------------------------

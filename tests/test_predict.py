@@ -13,11 +13,16 @@ import pytest
 
 from src.config import ALLOWED_FEATURES, PREDICT_AUC_LEAK_GUARDRAIL, RAW_DATA_DIR, verify_raw_files
 from src.predict import (
+    _aggregate_geo_centroids,
     _build_pipelines,
     _evaluate,
+    _haversine_km,
+    _load_geo_centroids,
     _load_payments,
+    _load_seller_customer_zips,
     _split_and_encode,
     build_feature_table,
+    compute_geo_distance,
     compute_seller_historical_late_rate,
     encode_product_category_frequency,
     fit_product_category_frequency,
@@ -41,7 +46,12 @@ def feature_table(
     dim_customer: pd.DataFrame,
 ) -> pd.DataFrame:
     payments = _load_payments()
-    return build_feature_table(fact_order_items, dim_product, dim_seller, dim_customer, payments)
+    geo_centroids = _load_geo_centroids()
+    seller_zips, customer_zips = _load_seller_customer_zips()
+    return build_feature_table(
+        fact_order_items, dim_product, dim_seller, dim_customer, payments,
+        geo_centroids, seller_zips, customer_zips,
+    )
 
 
 def test_feature_columns_equal_allowed_set_exactly(feature_table: pd.DataFrame) -> None:
@@ -93,8 +103,14 @@ def test_order_month_and_day_of_week_derived_correctly() -> None:
     dim_seller = pd.DataFrame({"seller_id": ["S1"], "seller_state": ["SP"]})
     dim_customer = pd.DataFrame({"customer_id": ["C1"], "customer_state": ["SP"]})
     payments = pd.DataFrame({"order_id": ["o1", "o2"], "payment_installments": [1, 3]})
+    geo_centroids = pd.DataFrame({"zip_prefix": [], "lat": [], "lng": []})
+    seller_zips = pd.DataFrame({"seller_id": ["S1"], "seller_zip_prefix": [1000]})
+    customer_zips = pd.DataFrame({"customer_id": ["C1"], "customer_zip_prefix": [2000]})
 
-    result = build_feature_table(fact, dim_product, dim_seller, dim_customer, payments)
+    result = build_feature_table(
+        fact, dim_product, dim_seller, dim_customer, payments,
+        geo_centroids, seller_zips, customer_zips,
+    )
 
     assert result.loc[0, "order_month"] == 3.0
     assert result.loc[0, "day_of_week"] == 0.0  # Monday == 0 (pandas dayofweek convention)
@@ -123,8 +139,14 @@ def test_n_items_in_order_counts_items_sharing_an_order_id() -> None:
     dim_seller = pd.DataFrame({"seller_id": ["S1"], "seller_state": ["SP"]})
     dim_customer = pd.DataFrame({"customer_id": ["C1"], "customer_state": ["SP"]})
     payments = pd.DataFrame({"order_id": ["o1", "o2"], "payment_installments": [2, 1]})
+    geo_centroids = pd.DataFrame({"zip_prefix": [], "lat": [], "lng": []})
+    seller_zips = pd.DataFrame({"seller_id": ["S1"], "seller_zip_prefix": [1000]})
+    customer_zips = pd.DataFrame({"customer_id": ["C1"], "customer_zip_prefix": [2000]})
 
-    result = build_feature_table(fact, dim_product, dim_seller, dim_customer, payments)
+    result = build_feature_table(
+        fact, dim_product, dim_seller, dim_customer, payments,
+        geo_centroids, seller_zips, customer_zips,
+    )
     by_key = result.set_index("item_key")
 
     assert by_key.loc["o1_1", "n_items_in_order"] == 3.0
@@ -285,6 +307,65 @@ def test_seller_historical_late_rate_ignores_future_outcomes() -> None:
     # i4 depends on o1,o2,o3 (its own is_late is not part of its own feature)
     # so it too is unchanged by flipping o4's own outcome.
     assert before["i4"] == after["i4"] == pytest.approx(1 / 3)
+
+
+def test_haversine_km_known_distances() -> None:
+    zero = pd.Series([0.0])
+    same_point = _haversine_km(zero, zero, zero, zero)
+    assert same_point.iloc[0] == pytest.approx(0.0, abs=1e-6)
+
+    # 1 degree of latitude is ~111.19 km along a meridian.
+    one_degree_lat = _haversine_km(
+        pd.Series([0.0]), pd.Series([0.0]), pd.Series([1.0]), pd.Series([0.0])
+    )
+    assert one_degree_lat.iloc[0] == pytest.approx(111.19, abs=0.5)
+
+    # Sao Paulo (-23.5505, -46.6333) to Rio de Janeiro (-22.9068, -43.1729):
+    # real great-circle distance is ~357 km.
+    sp_to_rj = _haversine_km(
+        pd.Series([-23.5505]), pd.Series([-46.6333]),
+        pd.Series([-22.9068]), pd.Series([-43.1729]),
+    )
+    assert sp_to_rj.iloc[0] == pytest.approx(357, abs=5)
+
+
+def test_aggregate_geo_centroids_uses_median_not_mean() -> None:
+    # An outlier point should barely move the median but would visibly move
+    # the mean -- this proves the aggregation is really MEDIAN, not MEAN.
+    geo = pd.DataFrame(
+        {
+            "geolocation_zip_code_prefix": [1000, 1000, 1000, 1000, 1000],
+            "geolocation_lat": [-23.50, -23.51, -23.49, -23.50, -50.00],  # last is an outlier
+            "geolocation_lng": [-46.60, -46.61, -46.59, -46.60, -46.60],
+        }
+    )
+    centroids = _aggregate_geo_centroids(geo).set_index("zip_prefix")
+    assert centroids.loc[1000, "lat"] == pytest.approx(-23.50, abs=0.01)  # median, unmoved
+    assert centroids.loc[1000, "lat"] != pytest.approx(geo["geolocation_lat"].mean())
+
+
+def test_compute_geo_distance_flags_missing_zip_without_dropping_row() -> None:
+    fact = pd.DataFrame(
+        {"item_key": ["i1", "i2"], "seller_id": ["S1", "S2"], "customer_id": ["C1", "C1"]}
+    )
+    geo_centroids = pd.DataFrame(
+        {"zip_prefix": [1000, 2000], "lat": [-23.5, -22.9], "lng": [-46.6, -43.2]}
+    )
+    seller_zips = pd.DataFrame(
+        {"seller_id": ["S1", "S2"], "seller_zip_prefix": [1000, 9999]}  # S2's zip has no geo match
+    )
+    customer_zips = pd.DataFrame({"customer_id": ["C1"], "customer_zip_prefix": [2000]})
+
+    result = compute_geo_distance(fact, geo_centroids, seller_zips, customer_zips).set_index(
+        "item_key"
+    )
+
+    assert result.loc["i1", "geo_distance_missing"] == 0.0
+    assert result.loc["i1", "geo_distance"] > 0.0
+    # i2's row is present (not dropped), geo_distance is NaN, and the flag says so.
+    assert "i2" in result.index
+    assert result.loc["i2", "geo_distance_missing"] == 1.0
+    assert pd.isna(result.loc["i2", "geo_distance"])
 
 
 def test_split_and_encode_uses_train_only_frequencies(feature_table: pd.DataFrame) -> None:
