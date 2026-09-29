@@ -63,7 +63,73 @@ _TARGET = "is_late"
 
 _PRECOMPUTED_FEATURES: tuple[str, ...] = ("price", "freight_value", "product_weight_g",
                                            "same_state", "order_month", "day_of_week",
-                                           "n_items_in_order", "payment_installments")
+                                           "n_items_in_order", "payment_installments",
+                                           "seller_historical_late_rate")
+
+
+def compute_seller_historical_late_rate(fact: pd.DataFrame) -> pd.DataFrame:
+    """Per-item expanding mean of the seller's own PRIOR order outcomes.
+
+    Never uses the seller's overall/global late rate, which would leak
+    future information into past predictions. Computed in three steps,
+    each addressing a real tie found in this data (verified empirically,
+    not assumed away):
+
+    1. Collapse to one row per (seller_id, order_id). Items sharing an
+       order and seller share `order_purchase_timestamp` and `is_late` by
+       construction, so computing history at the item level would let a
+       sibling item of the SAME order leak into its own "prior" feature.
+    2. Further collapse to one row per (seller_id, order_purchase_timestamp).
+       112 of 97,697 real (seller_id, order_id) pairs share a seller and an
+       exact-second timestamp across TWO OR THREE DIFFERENT orders; these
+       are simultaneous, not strictly ordered relative to each other, and
+       must not see each other either.
+    3. Within each seller (sorted by timestamp), take a cumulative
+       sum/count of `is_late` and then shift it by one row — via
+       `groupby("seller_id")[...].cumsum()` followed by a SEPARATE
+       `groupby("seller_id")[...].shift(1)` call. Both are standalone
+       groupby operations, which correctly reset at every seller boundary.
+       This is deliberately NOT `groupby(...).expanding().shift()`: shifting
+       the result of an `.expanding()` chain does not reset at group
+       boundaries and would silently leak the last row of one seller into
+       the first row of the next.
+
+    The per-(seller, timestamp) rate is then broadcast back to every item
+    row via a merge. A seller's earliest timestamp has no prior history and
+    is left `NaN`, for the pipeline's train-median imputer.
+
+    Args:
+        fact: FactOrderItems (must contain item_key, seller_id, order_id,
+            order_purchase_timestamp, is_late).
+
+    Returns:
+        DataFrame with columns `item_key`, `seller_historical_late_rate`.
+    """
+    seller_orders = fact[
+        ["seller_id", "order_id", "order_purchase_timestamp", "is_late"]
+    ].drop_duplicates(subset=["seller_id", "order_id"])
+
+    per_timestamp = (
+        seller_orders.groupby(["seller_id", "order_purchase_timestamp"])["is_late"]
+        .agg(late_sum="sum", order_count="count")
+        .reset_index()
+        .sort_values(["seller_id", "order_purchase_timestamp"])
+        .reset_index(drop=True)
+    )
+    per_timestamp["cum_late"] = per_timestamp.groupby("seller_id")["late_sum"].cumsum()
+    per_timestamp["cum_orders"] = per_timestamp.groupby("seller_id")["order_count"].cumsum()
+    per_timestamp["cum_late_before"] = per_timestamp.groupby("seller_id")["cum_late"].shift(1)
+    per_timestamp["cum_orders_before"] = per_timestamp.groupby("seller_id")["cum_orders"].shift(1)
+    per_timestamp["seller_historical_late_rate"] = (
+        per_timestamp["cum_late_before"] / per_timestamp["cum_orders_before"]
+    )
+
+    item_lookup = fact[["item_key", "seller_id", "order_purchase_timestamp"]].merge(
+        per_timestamp[["seller_id", "order_purchase_timestamp", "seller_historical_late_rate"]],
+        on=["seller_id", "order_purchase_timestamp"],
+        how="left",
+    )
+    return item_lookup[["item_key", "seller_historical_late_rate"]]
 
 
 def _load_payments() -> pd.DataFrame:
@@ -112,6 +178,7 @@ def build_feature_table(
     `payment_installments` is left-joined from `payments` (see
     `_load_payments`) on `order_id`; an order absent from the raw payments
     file is left `NaN`, for the pipeline's train-median imputer.
+    `seller_historical_late_rate` comes from `compute_seller_historical_late_rate`.
 
     Args:
         fact: FactOrderItems (must contain item_key, order_id, seller_id,
@@ -150,6 +217,7 @@ def build_feature_table(
     table["day_of_week"] = table["order_purchase_timestamp"].dt.dayofweek.astype(float)
     table = table.merge(payments, on="order_id", how="left")
     table["payment_installments"] = table["payment_installments"].astype(float)
+    table = table.merge(compute_seller_historical_late_rate(fact), on="item_key", how="left")
 
     result = table[["item_key", *_PRECOMPUTED_FEATURES, "product_category", "is_late"]].copy()
 

@@ -18,6 +18,7 @@ from src.predict import (
     _load_payments,
     _split_and_encode,
     build_feature_table,
+    compute_seller_historical_late_rate,
     encode_product_category_frequency,
     fit_product_category_frequency,
 )
@@ -152,6 +153,138 @@ def test_load_payments_aggregates_multi_row_orders_via_max() -> None:
     expected_max = raw.loc[raw["order_id"] == multi_row_order, "payment_installments"].max()
     actual = payments.loc[payments["order_id"] == multi_row_order, "payment_installments"].iloc[0]
     assert actual == expected_max
+
+
+def test_seller_historical_late_rate_basic_expanding_correctness() -> None:
+    fact = pd.DataFrame(
+        {
+            "item_key": ["i1", "i2", "i3"],
+            "order_id": ["o1", "o2", "o3"],
+            "seller_id": ["S1", "S1", "S1"],
+            "order_purchase_timestamp": [
+                pd.Timestamp("2018-01-01"),
+                pd.Timestamp("2018-02-01"),
+                pd.Timestamp("2018-03-01"),
+            ],
+            "is_late": [1, 0, 1],
+        }
+    )
+    result = compute_seller_historical_late_rate(fact).set_index("item_key")[
+        "seller_historical_late_rate"
+    ]
+    assert pd.isna(result["i1"])  # no prior orders
+    assert result["i2"] == pytest.approx(1.0)  # only prior order (o1) was late
+    assert result["i3"] == pytest.approx(0.5)  # prior orders o1,o2 -> mean([1, 0])
+
+
+def test_seller_historical_late_rate_isolated_per_seller() -> None:
+    fact = pd.DataFrame(
+        {
+            "item_key": ["i1", "i2", "i3", "i4"],
+            "order_id": ["o1", "o2", "o3", "o4"],
+            "seller_id": ["S1", "S2", "S1", "S2"],
+            "order_purchase_timestamp": [
+                pd.Timestamp("2018-01-01"),
+                pd.Timestamp("2018-01-02"),
+                pd.Timestamp("2018-01-03"),
+                pd.Timestamp("2018-01-04"),
+            ],
+            "is_late": [1, 0, 0, 1],
+        }
+    )
+    result = compute_seller_historical_late_rate(fact).set_index("item_key")[
+        "seller_historical_late_rate"
+    ]
+    assert pd.isna(result["i1"])  # S1's first order
+    assert pd.isna(result["i2"])  # S2's first order
+    assert result["i3"] == pytest.approx(1.0)  # S1's only prior order (o1) was late
+    assert result["i4"] == pytest.approx(0.0)  # S2's only prior order (o2) was on-time
+
+
+def test_seller_historical_late_rate_same_order_items_do_not_see_each_other() -> None:
+    # o1 has two items from the same seller (same timestamp, same order-level
+    # is_late by construction) -- neither may count as "prior" to the other.
+    fact = pd.DataFrame(
+        {
+            "item_key": ["o1_1", "o1_2", "o2_1"],
+            "order_id": ["o1", "o1", "o2"],
+            "seller_id": ["S1", "S1", "S1"],
+            "order_purchase_timestamp": [
+                pd.Timestamp("2018-01-01"),
+                pd.Timestamp("2018-01-01"),
+                pd.Timestamp("2018-02-01"),
+            ],
+            "is_late": [1, 1, 0],
+        }
+    )
+    result = compute_seller_historical_late_rate(fact).set_index("item_key")[
+        "seller_historical_late_rate"
+    ]
+    assert pd.isna(result["o1_1"])
+    assert pd.isna(result["o1_2"])
+    assert result["o2_1"] == pytest.approx(1.0)  # o1 (both items) counts as ONE prior order
+
+
+def test_seller_historical_late_rate_simultaneous_different_orders_do_not_see_each_other() -> None:
+    # Two DIFFERENT orders for the same seller at the exact same timestamp:
+    # simultaneous, not strictly ordered relative to each other.
+    same_ts = pd.Timestamp("2018-01-01")
+    fact = pd.DataFrame(
+        {
+            "item_key": ["i1", "i2"],
+            "order_id": ["o1", "o2"],
+            "seller_id": ["S1", "S1"],
+            "order_purchase_timestamp": [same_ts, same_ts],
+            "is_late": [1, 0],
+        }
+    )
+    result = compute_seller_historical_late_rate(fact).set_index("item_key")[
+        "seller_historical_late_rate"
+    ]
+    assert pd.isna(result["i1"])
+    assert pd.isna(result["i2"])
+
+
+def test_seller_historical_late_rate_ignores_future_outcomes() -> None:
+    """The dedicated no-leakage test: mutate the LATEST order's outcome and
+    confirm every earlier order's computed feature value is bit-for-bit
+    unchanged."""
+    fact = pd.DataFrame(
+        {
+            "item_key": ["i1", "i2", "i3", "i4"],
+            "order_id": ["o1", "o2", "o3", "o4"],
+            "seller_id": ["S1", "S1", "S1", "S1"],
+            "order_purchase_timestamp": [
+                pd.Timestamp("2018-01-01"),
+                pd.Timestamp("2018-02-01"),
+                pd.Timestamp("2018-03-01"),
+                pd.Timestamp("2018-04-01"),
+            ],
+            "is_late": [0, 1, 0, 0],
+        }
+    )
+    before = compute_seller_historical_late_rate(fact).set_index("item_key")[
+        "seller_historical_late_rate"
+    ]
+
+    mutated = fact.copy()
+    mutated.loc[mutated["order_id"] == "o4", "is_late"] = 1  # flip the LATEST order's outcome
+    after = compute_seller_historical_late_rate(mutated).set_index("item_key")[
+        "seller_historical_late_rate"
+    ]
+
+    # i1, i2, i3 depend only on STRICTLY PRIOR orders, never on o4 (which
+    # comes after all of them) -- must be bit-for-bit unchanged.
+    for key in ("i1", "i2", "i3"):
+        if pd.isna(before[key]):
+            assert pd.isna(after[key])
+        else:
+            assert before[key] == after[key]
+
+    assert before["i3"] == pytest.approx(0.5)  # sanity: mean of o1,o2 = mean([0, 1])
+    # i4 depends on o1,o2,o3 (its own is_late is not part of its own feature)
+    # so it too is unchanged by flipping o4's own outcome.
+    assert before["i4"] == after["i4"] == pytest.approx(1 / 3)
 
 
 def test_split_and_encode_uses_train_only_frequencies(feature_table: pd.DataFrame) -> None:
