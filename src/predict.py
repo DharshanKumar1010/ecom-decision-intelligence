@@ -1,10 +1,10 @@
 """Late-delivery risk prediction + sensitivity analysis (CLAUDE.md section 7.3).
 
-Target: `is_late`. Features: EXACTLY `config.ALLOWED_FEATURES`
-(`price`, `freight_value`, `product_weight_g`, `same_state`) — no
+Target: `is_late`. Features: EXACTLY `config.ALLOWED_FEATURES` — no
 `delivery_days`, delivered/estimated dates, or anything derived from them,
 since those define the target and would leak it. `build_feature_table`'s
-output columns are asserted against `ALLOWED_FEATURES` and tested.
+output columns (minus the one exception below) are asserted against
+`ALLOWED_FEATURES` and tested.
 
 Missing feature values are never dropped or imputed against the full
 dataset: both models are `sklearn.pipeline.Pipeline`s whose first step is a
@@ -12,6 +12,14 @@ dataset: both models are `sklearn.pipeline.Pipeline`s whose first step is a
 train fold only (`Pipeline.fit` on `X_train`) and merely applied
 (`.transform`) everywhere else, including the full-table `LatePredictions`
 pass.
+
+`product_category_freq` is the one feature that can't be computed inside
+`build_feature_table` (which runs before the train/test split exists): it's
+a frequency encoding that must be FIT on the train fold only, exactly like
+the imputer's median. `build_feature_table` instead returns the raw
+`product_category` string column, and `_split_and_encode` fits/applies the
+encoding immediately after splitting, before any model sees it — see that
+function's docstring.
 
 Guardrail: `ALLOWED_FEATURES` is a deliberately small, non-date feature set,
 so a test ROC-AUC above `config.PREDICT_AUC_LEAK_GUARDRAIL` is treated as a
@@ -52,13 +60,17 @@ logger = get_logger(__name__)
 _TARGET = "is_late"
 
 
+_PRECOMPUTED_FEATURES: tuple[str, ...] = ("price", "freight_value", "product_weight_g",
+                                           "same_state")
+
+
 def build_feature_table(
     fact: pd.DataFrame,
     dim_product: pd.DataFrame,
     dim_seller: pd.DataFrame,
     dim_customer: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Assemble the modeling table: item_key, ALLOWED_FEATURES, is_late.
+    """Assemble the modeling table: item_key, precomputed features, is_late.
 
     `same_state` is derived as `seller_state == customer_state` after
     joining `dim_seller`/`dim_customer` onto `fact`. `product_weight_g`
@@ -68,34 +80,118 @@ def build_feature_table(
     Args:
         fact: FactOrderItems (must contain item_key, seller_id, product_id,
             customer_id, price, freight_value, is_late).
-        dim_product: DimProduct (must contain product_id, product_weight_g).
+        dim_product: DimProduct (must contain product_id, product_weight_g,
+            product_category_name_english).
         dim_seller: DimSeller (must contain seller_id, seller_state).
         dim_customer: DimCustomer (must contain customer_id, customer_state).
 
     Returns:
-        DataFrame with columns `item_key`, every column in
-        `config.ALLOWED_FEATURES`, and `is_late`.
+        DataFrame with `item_key`, every precomputable feature in
+        `config.ALLOWED_FEATURES` (i.e. everything except
+        `product_category_freq`), the raw `product_category` string (not
+        itself a model feature — encoded post-split by `_split_and_encode`),
+        and `is_late`.
     """
     table = fact[["item_key", "seller_id", "product_id", "customer_id", "price",
                   "freight_value", "is_late"]].copy()
     table = table.merge(
-        dim_product[["product_id", "product_weight_g"]], on="product_id", how="left"
+        dim_product[["product_id", "product_weight_g", "product_category_name_english"]],
+        on="product_id",
+        how="left",
     )
+    table = table.rename(columns={"product_category_name_english": "product_category"})
     table = table.merge(dim_seller[["seller_id", "seller_state"]], on="seller_id", how="left")
     table = table.merge(
         dim_customer[["customer_id", "customer_state"]], on="customer_id", how="left"
     )
     table["same_state"] = (table["seller_state"] == table["customer_state"]).astype(float)
 
-    result = table[["item_key", *ALLOWED_FEATURES, "is_late"]].copy()
-    assert set(ALLOWED_FEATURES) <= set(result.columns), "missing an allowed feature column"
+    result = table[["item_key", *_PRECOMPUTED_FEATURES, "product_category", "is_late"]].copy()
 
-    na_counts = result[list(ALLOWED_FEATURES)].isna().sum()
+    na_counts = result[list(_PRECOMPUTED_FEATURES)].isna().sum()
     for feature, count in na_counts.items():
         if count > 0:
             logger.info("Feature %s: %d missing value(s), left for train-median imputation",
                         feature, count)
     return result
+
+
+def fit_product_category_frequency(categories: pd.Series) -> dict[str, float]:
+    """Fit a train-only frequency encoding: category -> share of train items in it.
+
+    Must be fit on the TRAIN fold only (mirrors the pipeline imputer's
+    train-median-only rule) and applied via `encode_product_category_frequency`
+    to train, test, and the full table alike.
+
+    Args:
+        categories: `product_category` values from the TRAIN fold only.
+
+    Returns:
+        Dict mapping each observed category to its proportion of train rows
+        (sums to 1.0 across all keys).
+    """
+    counts: dict[str, float] = categories.value_counts(normalize=True).to_dict()
+    return counts
+
+
+def encode_product_category_frequency(
+    categories: pd.Series, frequency_map: dict[str, float]
+) -> pd.Series:
+    """Apply a fitted frequency encoding, mapping unseen categories to 0.0.
+
+    0.0 for an unseen category means "never observed in training," which is
+    a distinct and more honest signal than mapping it to the rarest known
+    category's frequency.
+
+    Args:
+        categories: `product_category` values to encode (train, test, or
+            the full table).
+        frequency_map: output of `fit_product_category_frequency`.
+
+    Returns:
+        Float series of encoded frequencies, same index as `categories`.
+    """
+    return categories.map(frequency_map).fillna(0.0)
+
+
+def _split_and_encode(
+    table: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, dict[str, float]]:
+    """Stratified 80/20 split, then fit/apply product_category encoding on train only.
+
+    Args:
+        table: output of `build_feature_table` (must contain every column in
+            `_PRECOMPUTED_FEATURES`, `product_category`, and `is_late`).
+
+    Returns:
+        `(x_train, x_test, y_train, y_test, category_freq_map)`: the first
+        four have exactly `config.ALLOWED_FEATURES` columns;
+        `category_freq_map` is returned so callers (e.g. the full-table
+        `LatePredictions` pass) can apply the same train-fitted encoding
+        elsewhere without refitting it.
+    """
+    table_train, table_test = train_test_split(
+        table, test_size=0.2, stratify=table[_TARGET], random_state=SEED
+    )
+    assert set(table_train.index).isdisjoint(set(table_test.index)), "train/test overlap"
+
+    category_freq_map = fit_product_category_frequency(table_train["product_category"])
+    table_train = table_train.assign(
+        product_category_freq=encode_product_category_frequency(
+            table_train["product_category"], category_freq_map
+        )
+    )
+    table_test = table_test.assign(
+        product_category_freq=encode_product_category_frequency(
+            table_test["product_category"], category_freq_map
+        )
+    )
+
+    x_train = table_train[list(ALLOWED_FEATURES)]
+    x_test = table_test[list(ALLOWED_FEATURES)]
+    y_train = table_train[_TARGET]
+    y_test = table_test[_TARGET]
+    return x_train, x_test, y_train, y_test, category_freq_map
 
 
 def _build_pipelines() -> tuple[Pipeline, Pipeline]:
@@ -210,13 +306,7 @@ def main() -> None:
     dim_customer = pd.read_parquet(PROCESSED_DATA_DIR / "DimCustomer.parquet")
 
     table = build_feature_table(fact, dim_product, dim_seller, dim_customer)
-    x = table[list(ALLOWED_FEATURES)]
-    y = table[_TARGET]
-
-    x_train, x_test, y_train, y_test = train_test_split(
-        x, y, test_size=0.2, stratify=y, random_state=SEED
-    )
-    assert set(x_train.index).isdisjoint(set(x_test.index)), "train/test overlap"
+    x_train, x_test, y_train, y_test, category_freq_map = _split_and_encode(table)
     logger.info("Train/test split: %d / %d rows, base rate %.4f%%", len(x_train), len(x_test),
                 float(y_test.mean()) * 100)
 
@@ -269,8 +359,15 @@ def main() -> None:
     sensitivity = _sensitivity_analysis(lr_pipeline, x_test)
     sensitivity.to_csv(REPORTS_DIR / "sensitivity.csv", index=False)
 
+    full_table = table.assign(
+        product_category_freq=encode_product_category_frequency(
+            table["product_category"], category_freq_map
+        )
+    )
     late_predictions = table[["item_key"]].copy()
-    late_predictions["late_risk"] = lr_pipeline.predict_proba(table[list(ALLOWED_FEATURES)])[:, 1]
+    late_predictions["late_risk"] = lr_pipeline.predict_proba(
+        full_table[list(ALLOWED_FEATURES)]
+    )[:, 1]
     assert late_predictions["late_risk"].between(0, 1).all(), "late_risk outside [0, 1]"
     late_predictions.to_parquet(PROCESSED_DATA_DIR / "LatePredictions.parquet", index=False)
 

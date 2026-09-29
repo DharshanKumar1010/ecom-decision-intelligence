@@ -93,7 +93,13 @@ def verify_raw_files(raw_dir: Path = RAW_DATA_DIR) -> None:
 
 
 # --------------------------------------------------------------------------
-# Predictive model feature contract (src/predict.py, built in a later stage)
+# Predictive model feature contract (src/predict.py)
+#
+# Stage 3 (CLAUDE.md section 17) expands this list one feature at a time,
+# each independently leakage-checked; this is the CURRENT, real feature set
+# after that process, not the original Stage 2 4-feature baseline. See
+# BUILD_LOG.md for the before/after AUC of each addition, including any
+# that were tried and backed out.
 # --------------------------------------------------------------------------
 
 ALLOWED_FEATURES: tuple[str, ...] = (
@@ -101,6 +107,7 @@ ALLOWED_FEATURES: tuple[str, ...] = (
     "freight_value",
     "product_weight_g",
     "same_state",
+    "product_category_freq",
 )
 
 # --------------------------------------------------------------------------

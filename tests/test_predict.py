@@ -10,10 +10,16 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
-from sklearn.model_selection import train_test_split
 
-from src.config import ALLOWED_FEATURES, PREDICT_AUC_LEAK_GUARDRAIL, SEED
-from src.predict import _build_pipelines, _evaluate, build_feature_table
+from src.config import ALLOWED_FEATURES, PREDICT_AUC_LEAK_GUARDRAIL
+from src.predict import (
+    _build_pipelines,
+    _evaluate,
+    _split_and_encode,
+    build_feature_table,
+    encode_product_category_frequency,
+    fit_product_category_frequency,
+)
 
 _FORBIDDEN_COLUMNS = {
     "delivery_days",
@@ -36,8 +42,40 @@ def feature_table(
 
 
 def test_feature_columns_equal_allowed_set_exactly(feature_table: pd.DataFrame) -> None:
-    columns = set(feature_table.columns) - {"item_key", "is_late"}
-    assert columns == set(ALLOWED_FEATURES)
+    # build_feature_table returns every precomputable ALLOWED_FEATURES column
+    # plus the raw product_category string (encoded post-split, not itself a
+    # feature) and item_key/is_late.
+    columns = set(feature_table.columns) - {"item_key", "is_late", "product_category"}
+    assert columns == set(ALLOWED_FEATURES) - {"product_category_freq"}
+
+
+def test_product_category_frequency_fit_and_encode() -> None:
+    train_categories = pd.Series(["toys", "toys", "toys", "books", "books", "games"])
+    freq_map = fit_product_category_frequency(train_categories)
+
+    assert freq_map["toys"] == pytest.approx(3 / 6)
+    assert freq_map["books"] == pytest.approx(2 / 6)
+    assert freq_map["games"] == pytest.approx(1 / 6)
+    assert sum(freq_map.values()) == pytest.approx(1.0)
+
+    encoded = encode_product_category_frequency(
+        pd.Series(["toys", "books", "unseen_category"]), freq_map
+    )
+    assert encoded.iloc[0] == pytest.approx(3 / 6)
+    assert encoded.iloc[1] == pytest.approx(2 / 6)
+    assert encoded.iloc[2] == pytest.approx(0.0)  # never observed in training
+
+
+def test_split_and_encode_uses_train_only_frequencies(feature_table: pd.DataFrame) -> None:
+    x_train, x_test, y_train, y_test, freq_map = _split_and_encode(feature_table)
+    assert set(x_train.columns) == set(ALLOWED_FEATURES)
+    assert set(x_test.columns) == set(ALLOWED_FEATURES)
+    assert set(x_train.index).isdisjoint(set(x_test.index))
+    assert x_train["product_category_freq"].between(0.0, 1.0).all()
+    assert x_test["product_category_freq"].between(0.0, 1.0).all()
+    assert len(y_train) == len(x_train)
+    assert len(y_test) == len(x_test)
+    assert freq_map  # non-empty: fit on a non-trivial train fold
 
 
 def test_no_forbidden_leakage_columns(feature_table: pd.DataFrame) -> None:
@@ -48,18 +86,12 @@ def test_no_forbidden_leakage_columns(feature_table: pd.DataFrame) -> None:
 
 
 def test_train_test_disjoint(feature_table: pd.DataFrame) -> None:
-    x = feature_table[list(ALLOWED_FEATURES)]
-    y = feature_table["is_late"]
-    x_train, x_test, _, _ = train_test_split(x, y, test_size=0.2, stratify=y, random_state=SEED)
+    x_train, x_test, _, _, _ = _split_and_encode(feature_table)
     assert set(x_train.index).isdisjoint(set(x_test.index))
 
 
 def test_late_risk_in_unit_interval(feature_table: pd.DataFrame) -> None:
-    x = feature_table[list(ALLOWED_FEATURES)]
-    y = feature_table["is_late"]
-    x_train, x_test, y_train, _ = train_test_split(
-        x, y, test_size=0.2, stratify=y, random_state=SEED
-    )
+    x_train, x_test, y_train, _, _ = _split_and_encode(feature_table)
     lr_pipeline, _ = _build_pipelines()
     lr_pipeline.fit(x_train, y_train)
     late_risk = lr_pipeline.predict_proba(x_test)[:, 1]
@@ -67,11 +99,7 @@ def test_late_risk_in_unit_interval(feature_table: pd.DataFrame) -> None:
 
 
 def test_auc_below_leak_guardrail(feature_table: pd.DataFrame) -> None:
-    x = feature_table[list(ALLOWED_FEATURES)]
-    y = feature_table["is_late"]
-    x_train, x_test, y_train, y_test = train_test_split(
-        x, y, test_size=0.2, stratify=y, random_state=SEED
-    )
+    x_train, x_test, y_train, y_test, _ = _split_and_encode(feature_table)
     lr_pipeline, dt_pipeline = _build_pipelines()
     lr_pipeline.fit(x_train, y_train)
     dt_pipeline.fit(x_train, y_train)
@@ -80,13 +108,8 @@ def test_auc_below_leak_guardrail(feature_table: pd.DataFrame) -> None:
 
 
 def test_seed_reproducibility(feature_table: pd.DataFrame) -> None:
-    x = feature_table[list(ALLOWED_FEATURES)]
-    y = feature_table["is_late"]
-
     def _fit_predict() -> pd.Series:
-        x_train, x_test, y_train, _ = train_test_split(
-            x, y, test_size=0.2, stratify=y, random_state=SEED
-        )
+        x_train, x_test, y_train, _, _ = _split_and_encode(feature_table)
         lr_pipeline, _ = _build_pipelines()
         lr_pipeline.fit(x_train, y_train)
         return lr_pipeline.predict_proba(x_test)[:, 1]

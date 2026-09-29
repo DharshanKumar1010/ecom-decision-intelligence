@@ -6,21 +6,21 @@
 |   |   |   |--- freight_value >  9.32
 |   |   |   |   |--- class: 0
 |   |   |--- freight_value >  13.47
-|   |   |   |--- product_weight_g <= 203.50
-|   |   |   |   |--- class: 0
-|   |   |   |--- product_weight_g >  203.50
+|   |   |   |--- product_category_freq <= 0.00
+|   |   |   |   |--- class: 1
+|   |   |   |--- product_category_freq >  0.00
 |   |   |   |   |--- class: 0
 |   |--- freight_value >  13.77
-|   |   |--- product_weight_g <= 10237.50
-|   |   |   |--- freight_value <= 15.57
+|   |   |--- product_category_freq <= 0.09
+|   |   |   |--- product_weight_g <= 10237.50
 |   |   |   |   |--- class: 1
-|   |   |   |--- freight_value >  15.57
+|   |   |   |--- product_weight_g >  10237.50
 |   |   |   |   |--- class: 1
-|   |   |--- product_weight_g >  10237.50
-|   |   |   |--- freight_value <= 237.47
-|   |   |   |   |--- class: 1
-|   |   |   |--- freight_value >  237.47
+|   |   |--- product_category_freq >  0.09
+|   |   |   |--- price <= 21.94
 |   |   |   |   |--- class: 0
+|   |   |   |--- price >  21.94
+|   |   |   |   |--- class: 1
 |--- same_state >  0.50
 |   |--- price <= 1.70
 |   |   |--- class: 1
