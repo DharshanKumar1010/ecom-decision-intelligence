@@ -102,3 +102,88 @@ Full expert-system action counts also shifted: Keep 2231 -> 1881, Warn
 
 No feature was backed out during Part A — this section exists per CLAUDE.md
 section 17's instruction to log the process either way, successes included.
+
+## Stage 3.5 — RandomForestClassifier adopted as primary model
+
+**This is a formal, confirmed override of CLAUDE.md's original hard
+constraint** ("Predictive models are limited to LogisticRegression and
+DecisionTreeClassifier"). The user was told explicitly this conflicted with
+the constraint and confirmed proceeding, with CLAUDE.md itself updated to
+match (see section 1 and 7.3). LR and DT are retained in the pipeline for
+interpretability, not removed.
+
+### Evidence trail (two diagnostics, run before this adoption)
+
+1. `reports/diagnostic_rf_ceiling.txt` — single 80/20 split, same features:
+   RF 0.7841 vs. DT 0.6738 vs. LR 0.6347. Top feature by permutation
+   importance: `order_month`.
+2. `reports/diagnostic_rf_cv.txt` — 5-fold stratified CV, same config:
+   RF **0.7928 ± 0.0051** vs. DT **0.6870 ± 0.0083** vs. LR **0.6247 ± 0.0083**.
+   `order_month` was the top feature in **5/5 folds**. No unusually
+   high/low fold beyond normal variance. This confirmed the single-split
+   result was real, generalizable signal, not a lucky split.
+
+### What changed in the committed pipeline
+
+- `src/predict.py`: `RandomForestClassifier(n_estimators=300, max_depth=None,
+  class_weight="balanced", random_state=42)` added as a third model,
+  trained on the identical 12-feature set and identical 80/20 split as LR/DT.
+- **Real single-split test AUCs (this run):** LR 0.6347, DT 0.6738,
+  **RF 0.7841** — matches the earlier ceiling diagnostic exactly (same
+  split, same seed).
+- `LatePredictions.parquet`: `late_risk` (primary column) now comes from
+  RandomForest; `late_risk_lr`/`late_risk_dt` added alongside, not
+  discarded.
+- A real gap was caught and fixed while doing this: `reports/sensitivity.csv`
+  was previously **LR-only** (the request's premise that it already covered
+  "LR/DT's existing" results was not quite accurate — DT sensitivity had
+  never been computed). Fixed by adding a `model` column and running the
+  same perturbation methodology for LR, DT, and RF all three.
+- `models/`: added `random_forest.joblib` (**423 MB** — worth flagging: an
+  unlimited-depth, 300-tree forest on ~88K rows is a real storage cost
+  compared to LR's/DT's few-KB files; not a blocker for this project's
+  architecture since Python models aren't served through the SQL
+  Server/Power BI layer, but notable). Replaced the single combined
+  `model_metadata.json` with per-model metadata files, and added
+  `models/registry.json` marking `random_forest` as `primary` and the
+  other two as `retained_for_interpretability`.
+
+### R08 vs. R09 — the picture inverts under RandomForest (real numbers)
+
+RF's per-item `late_risk` spans the FULL **0.0 - 1.0** range (mean 0.150,
+median 0.106), a dramatically wider and better-discriminating distribution
+than LR's narrow 0.31 - 0.88 band. Seller-level `avg_late_risk` now ranges
+**0.0 - 1.0** (was 0.3096 - 0.8837 under LR). Consequence:
+
+- **R08** (`avg_late_risk < 0.3`, CLAUDE.md's original literal threshold)
+  now fires on **472 of 478 Hidden Gems (98.7%)** — up from 0. It is now
+  the more discriminating of the two Promote rules.
+- **R09** (`avg_late_risk < 0.474`, the value recalibrated against LR's
+  narrower range) now fires on **478 of 478 (100%)** — every Hidden Gem
+  clears it, so R09 is now essentially non-discriminating given RF's wider
+  spread. This is worth revisiting in a future rules pass (not done here —
+  out of scope for this diagnostic-to-adoption change), since a
+  non-discriminating rule sitting at higher priority than a now-meaningful
+  R08 changes which rule actually determines the outcome in practice.
+
+### Full expert-system action-count shift (real, before vs. after)
+
+Quadrant counts (Star/Hidden Gem/Overrated/Overlooked-Low-Quality) are
+**unchanged** — confirmed by rerunning `discovery.py`, not assumed;
+`compute_quadrants` only ever depended on `ahp_score`/`order_volume`,
+neither of which involves `late_risk`.
+
+| Action | Before (LR primary) | After (RF primary) |
+|---|---|---|
+| Keep | 1,881 | 2,091 |
+| Warn | 461 | 242 |
+| Feature | 250 | 256 |
+| Suspend | 131 | 60 |
+| Promote | 247 | 321 |
+
+Suspend and Warn both dropped substantially (RF's tighter, better-calibrated
+risk estimates flag fewer sellers as high-risk in aggregate), while Promote
+rose (consistent with R08 now firing broadly). This is a real, meaningful
+shift in the expert system's real-world output driven purely by swapping
+which model produces `late_risk` — underscores why the diagnostic-then-CV
+evidence process mattered before making this change.

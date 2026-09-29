@@ -6,9 +6,19 @@ since those define the target and would leak it. `build_feature_table`'s
 output columns (minus the one exception below) are asserted against
 `ALLOWED_FEATURES` and tested.
 
+Three models are trained on the identical split and feature set:
+`LogisticRegression` and `DecisionTreeClassifier` (kept for interpretability
+— readable coefficients / a printable rule path) and `RandomForestClassifier`
+as the PRIMARY/production model, adopted based on confirmed cross-validated
+evidence (5-fold CV mean AUC 0.7928 vs. DT's 0.6870 and LR's 0.6247, stable
+low-variance advantage, identical top-feature ranking in every fold — see
+`reports/diagnostic_rf_cv.txt` and `BUILD_LOG.md`). This is an explicit,
+confirmed override of CLAUDE.md's historical "LR/DT only" constraint — see
+CLAUDE.md section 1 and 7.3, updated alongside this change.
+
 Missing feature values are never dropped or imputed against the full
-dataset: both models are `sklearn.pipeline.Pipeline`s whose first step is a
-`SimpleImputer(strategy="median")`, so the median is always fit on the
+dataset: all three models are `sklearn.pipeline.Pipeline`s whose first step
+is a `SimpleImputer(strategy="median")`, so the median is always fit on the
 train fold only (`Pipeline.fit` on `X_train`) and merely applied
 (`.transform`) everywhere else, including the full-table `LatePredictions`
 pass.
@@ -36,6 +46,7 @@ from typing import Any
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.inspection import permutation_importance
 from sklearn.linear_model import LogisticRegression
@@ -475,6 +486,32 @@ def _build_pipelines() -> tuple[Pipeline, Pipeline]:
     return lr_pipeline, dt_pipeline
 
 
+def _build_rf_pipeline() -> Pipeline:
+    """Construct the (unfitted) RandomForest pipeline — the primary model.
+
+    Hyperparameters are hardcoded inline, matching how `_build_pipelines`
+    already hardcodes LR's/DT's own hyperparameters (existing convention,
+    not a new one). Adopted based on confirmed cross-validated evidence —
+    see the module docstring.
+
+    Returns:
+        An unfitted `Pipeline` starting with a `SimpleImputer(strategy="median")`
+        step.
+    """
+    return Pipeline(
+        [
+            ("imputer", SimpleImputer(strategy="median")),
+            (
+                "clf",
+                RandomForestClassifier(
+                    n_estimators=300, max_depth=None, class_weight="balanced",
+                    random_state=SEED,
+                ),
+            ),
+        ]
+    )
+
+
 def _evaluate(pipeline: Pipeline, x_test: pd.DataFrame, y_test: pd.Series) -> dict[str, Any]:
     """Compute test-set-only metrics for a fitted pipeline.
 
@@ -507,7 +544,9 @@ def _evaluate(pipeline: Pipeline, x_test: pd.DataFrame, y_test: pd.Series) -> di
     }
 
 
-def _sensitivity_analysis(pipeline: Pipeline, x_test: pd.DataFrame) -> pd.DataFrame:
+def _sensitivity_analysis(
+    pipeline: Pipeline, x_test: pd.DataFrame, model_name: str
+) -> pd.DataFrame:
     """Perturb each feature and record the mean change in predicted late_risk.
 
     Continuous features (`price`, `freight_value`, `product_weight_g`) are
@@ -518,9 +557,11 @@ def _sensitivity_analysis(pipeline: Pipeline, x_test: pd.DataFrame) -> pd.DataFr
     Args:
         pipeline: fitted pipeline used to predict `late_risk`.
         x_test: held-out feature matrix (only ALLOWED_FEATURES columns).
+        model_name: label written into every output row's `model` column,
+            so results for multiple models can be concatenated into one file.
 
     Returns:
-        DataFrame with columns `feature`, `perturbation`,
+        DataFrame with columns `model`, `feature`, `perturbation`,
         `mean_late_risk_change`.
     """
     baseline = pipeline.predict_proba(x_test)[:, 1]
@@ -533,6 +574,7 @@ def _sensitivity_analysis(pipeline: Pipeline, x_test: pd.DataFrame) -> pd.DataFr
             new_pred = pipeline.predict_proba(perturbed)[:, 1]
             rows.append(
                 {
+                    "model": model_name,
                     "feature": feature,
                     "perturbation": "flip_0_1",
                     "mean_late_risk_change": float((new_pred - baseline).mean()),
@@ -545,6 +587,7 @@ def _sensitivity_analysis(pipeline: Pipeline, x_test: pd.DataFrame) -> pd.DataFr
                 new_pred = pipeline.predict_proba(perturbed)[:, 1]
                 rows.append(
                     {
+                        "model": model_name,
                         "feature": feature,
                         "perturbation": f"{pct:+.0%}",
                         "mean_late_risk_change": float((new_pred - baseline).mean()),
@@ -572,13 +615,21 @@ def main() -> None:
                 float(y_test.mean()) * 100)
 
     lr_pipeline, dt_pipeline = _build_pipelines()
+    rf_pipeline = _build_rf_pipeline()
     lr_pipeline.fit(x_train, y_train)
     dt_pipeline.fit(x_train, y_train)
+    rf_pipeline.fit(x_train, y_train)
 
     lr_metrics = _evaluate(lr_pipeline, x_test, y_test)
     dt_metrics = _evaluate(dt_pipeline, x_test, y_test)
+    rf_metrics = _evaluate(rf_pipeline, x_test, y_test)
 
-    for name, metrics in (("logistic_regression", lr_metrics), ("decision_tree", dt_metrics)):
+    all_metrics = (
+        ("logistic_regression", lr_metrics),
+        ("decision_tree", dt_metrics),
+        ("random_forest", rf_metrics),
+    )
+    for name, metrics in all_metrics:
         if metrics["roc_auc"] > PREDICT_AUC_LEAK_GUARDRAIL:
             raise AssertionError(
                 f"{name} test ROC-AUC {metrics['roc_auc']:.4f} exceeds the leak guardrail "
@@ -588,7 +639,7 @@ def main() -> None:
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     with (REPORTS_DIR / "model_metrics.json").open("w", encoding="utf-8") as fh:
-        json.dump({"logistic_regression": lr_metrics, "decision_tree": dt_metrics}, fh, indent=2)
+        json.dump(dict(all_metrics), fh, indent=2)
 
     tree_text = export_text(dt_pipeline.named_steps["clf"], feature_names=list(ALLOWED_FEATURES))
     (REPORTS_DIR / "decision_tree.txt").write_text(tree_text, encoding="utf-8")
@@ -617,7 +668,30 @@ def main() -> None:
             )
     pd.DataFrame(importance_rows).to_csv(REPORTS_DIR / "feature_importance.csv", index=False)
 
-    sensitivity = _sensitivity_analysis(lr_pipeline, x_test)
+    rf_importance = permutation_importance(
+        rf_pipeline, x_test, y_test, n_repeats=20, random_state=SEED, scoring="roc_auc"
+    )
+    rf_importance_df = (
+        pd.DataFrame(
+            {
+                "feature": list(ALLOWED_FEATURES),
+                "importance_mean": rf_importance.importances_mean,
+                "importance_std": rf_importance.importances_std,
+            }
+        )
+        .sort_values("importance_mean", ascending=False)
+        .reset_index(drop=True)
+    )
+    rf_importance_df.to_csv(REPORTS_DIR / "rf_feature_importance.csv", index=False)
+
+    sensitivity = pd.concat(
+        [
+            _sensitivity_analysis(lr_pipeline, x_test, "logistic_regression"),
+            _sensitivity_analysis(dt_pipeline, x_test, "decision_tree"),
+            _sensitivity_analysis(rf_pipeline, x_test, "random_forest"),
+        ],
+        ignore_index=True,
+    )
     sensitivity.to_csv(REPORTS_DIR / "sensitivity.csv", index=False)
 
     full_table = table.assign(
@@ -625,29 +699,61 @@ def main() -> None:
             table["product_category"], category_freq_map
         )
     )
+    full_x = full_table[list(ALLOWED_FEATURES)]
     late_predictions = table[["item_key"]].copy()
-    late_predictions["late_risk"] = lr_pipeline.predict_proba(
-        full_table[list(ALLOWED_FEATURES)]
-    )[:, 1]
-    assert late_predictions["late_risk"].between(0, 1).all(), "late_risk outside [0, 1]"
+    # Primary: RandomForest, adopted based on confirmed CV evidence (module
+    # docstring). LR's/DT's predictions are kept alongside for the
+    # interpretability story, not discarded.
+    late_predictions["late_risk"] = rf_pipeline.predict_proba(full_x)[:, 1]
+    late_predictions["late_risk_lr"] = lr_pipeline.predict_proba(full_x)[:, 1]
+    late_predictions["late_risk_dt"] = dt_pipeline.predict_proba(full_x)[:, 1]
+    for col in ("late_risk", "late_risk_lr", "late_risk_dt"):
+        assert late_predictions[col].between(0, 1).all(), f"{col} outside [0, 1]"
     late_predictions.to_parquet(PROCESSED_DATA_DIR / "LatePredictions.parquet", index=False)
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     joblib.dump(lr_pipeline, MODELS_DIR / "logistic_regression.joblib")
     joblib.dump(dt_pipeline, MODELS_DIR / "decision_tree.joblib")
-    metadata = {
-        "features": list(ALLOWED_FEATURES),
-        "seed": SEED,
-        "timestamp": datetime.now(UTC).isoformat(),
-        "metrics": {"logistic_regression": lr_metrics, "decision_tree": dt_metrics},
+    joblib.dump(rf_pipeline, MODELS_DIR / "random_forest.joblib")
+
+    timestamp = datetime.now(UTC).isoformat()
+    model_files = {
+        "logistic_regression": ("logistic_regression.joblib", lr_metrics),
+        "decision_tree": ("decision_tree.joblib", dt_metrics),
+        "random_forest": ("random_forest.joblib", rf_metrics),
     }
-    with (MODELS_DIR / "model_metadata.json").open("w", encoding="utf-8") as fh:
-        json.dump(metadata, fh, indent=2)
+    for name, (_joblib_file, metrics) in model_files.items():
+        per_model_metadata = {
+            "algorithm": name,
+            "features": list(ALLOWED_FEATURES),
+            "seed": SEED,
+            "timestamp": timestamp,
+            "metrics": metrics,
+        }
+        with (MODELS_DIR / f"{name}_metadata.json").open("w", encoding="utf-8") as fh:
+            json.dump(per_model_metadata, fh, indent=2)
+
+    registry = {
+        "primary_model": "random_forest",
+        "updated": timestamp,
+        "models": {
+            name: {
+                "role": "primary" if name == "random_forest" else "retained_for_interpretability",
+                "file": joblib_file,
+                "metadata_file": f"{name}_metadata.json",
+                "test_roc_auc": metrics["roc_auc"],
+            }
+            for name, (joblib_file, metrics) in model_files.items()
+        },
+    }
+    with (MODELS_DIR / "registry.json").open("w", encoding="utf-8") as fh:
+        json.dump(registry, fh, indent=2)
 
     logger.info(
         "Wrote model_metrics.json, decision_tree.txt, coefficients.csv, "
-        "feature_importance.csv, sensitivity.csv, LatePredictions.parquet (%d rows), "
-        "and 2 joblib models with metadata",
+        "feature_importance.csv, rf_feature_importance.csv, sensitivity.csv, "
+        "LatePredictions.parquet (%d rows), 3 joblib models with per-model metadata, "
+        "and models/registry.json (primary=random_forest)",
         len(late_predictions),
     )
 

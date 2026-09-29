@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
-from src.config import RULES_DIR
+from src.config import PROCESSED_DATA_DIR, RULES_DIR
 from src.expert import (
     Condition,
     ExplanationFacility,
@@ -66,14 +67,29 @@ def test_feature_fires_for_top_established_seller(engine: InferenceEngine) -> No
     assert result.fired_rule.action == "Feature"
 
 
-def test_promote_fires_for_hidden_gem_with_low_late_risk(engine: InferenceEngine) -> None:
+def test_promote_fires_via_r08_for_moderate_low_risk_hidden_gem(engine: InferenceEngine) -> None:
     facts = WorkingMemory(
         seller_id="gem", ahp_score=0.75, avg_late_risk=0.2, avg_review=4.5,
         order_volume=8, late_rate=0.0, is_hidden_gem=True,
     ).as_facts()
     result = engine.run(facts)
     assert result.fired_rule.action == "Promote"
-    assert result.fired_rule.id == "R08"  # the CLAUDE.md-literal (<0.3) rule outranks R09
+    # 0.2 is below R08's 0.3 but not below R09's tighter 0.05 -- only R08 matches.
+    assert result.fired_rule.id == "R08"
+
+
+def test_promote_fires_via_r09_for_very_low_risk_hidden_gem(engine: InferenceEngine) -> None:
+    facts = WorkingMemory(
+        # ahp_score kept below R06's 0.789 Feature threshold so this fixture
+        # isolates the Promote tier rather than accidentally matching Feature.
+        seller_id="best_gem", ahp_score=0.75, avg_late_risk=0.02, avg_review=4.8,
+        order_volume=6, late_rate=0.0, is_hidden_gem=True,
+    ).as_facts()
+    result = engine.run(facts)
+    assert result.fired_rule.action == "Promote"
+    # 0.02 is below BOTH thresholds; R09 (priority 80, the tighter/high-confidence
+    # tier) outranks R08 (priority 78) when both match.
+    assert result.fired_rule.id == "R09"
 
 
 def test_keep_fires_via_default_rule_for_sparse_seller(engine: InferenceEngine) -> None:
@@ -155,6 +171,44 @@ def test_knowledge_base_rejects_unknown_operator(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="unknown operator"):
         KnowledgeBase.from_yaml(bad_yaml)
+
+
+def test_promote_rules_remain_discriminating_among_real_hidden_gems(
+    engine: InferenceEngine,
+) -> None:
+    """Regression guard against the exact drift this file was recalibrated for.
+
+    R09 (and R08) are meant to split Hidden Gems into meaningfully different
+    confidence tiers. If a future model change pushes `avg_late_risk`'s
+    distribution around again, one of these thresholds could silently drift
+    to firing on ~0% or ~100% of Hidden Gems (as R09's old 0.474 threshold
+    did when RandomForest replaced LogisticRegression as primary — see
+    BUILD_LOG.md). This checks the REAL current data, not a fixture, so
+    that drift is caught automatically.
+    """
+    seller_facts_path = PROCESSED_DATA_DIR / "SellerFacts.parquet"
+    if not seller_facts_path.exists():
+        pytest.skip("data/processed/SellerFacts.parquet not available; run run_all.py first")
+
+    seller_facts = pd.read_parquet(seller_facts_path)
+    hidden_gems = seller_facts[seller_facts["is_hidden_gem"]]
+    assert len(hidden_gems) > 0, "no Hidden Gems in the real data; can't test discrimination"
+
+    rules_by_id = {rule.id: rule for rule in engine.knowledge_base.rules}
+    for rule_id in ("R08", "R09"):
+        rule = rules_by_id[rule_id]
+        match_rate = hidden_gems.apply(
+            lambda row, r=rule: r.matches(
+                {"is_hidden_gem": bool(row["is_hidden_gem"]),
+                 "avg_late_risk": row["avg_late_risk"]}
+            ),
+            axis=1,
+        ).mean()
+        assert 0.0 < match_rate < 1.0, (
+            f"{rule_id} fires on {match_rate:.1%} of real Hidden Gems -- "
+            "not discriminating (0% or 100%); its threshold likely needs "
+            "recalibrating against the current model's late_risk distribution."
+        )
 
 
 def test_knowledge_base_rejects_missing_required_field(tmp_path: Path) -> None:

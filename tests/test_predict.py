@@ -8,6 +8,8 @@ train/test split rather than the full model-metrics pipeline.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 import pytest
 
@@ -15,6 +17,7 @@ from src.config import ALLOWED_FEATURES, PREDICT_AUC_LEAK_GUARDRAIL, RAW_DATA_DI
 from src.predict import (
     _aggregate_geo_centroids,
     _build_pipelines,
+    _build_rf_pipeline,
     _evaluate,
     _haversine_km,
     _load_geo_centroids,
@@ -52,6 +55,31 @@ def feature_table(
         fact_order_items, dim_product, dim_seller, dim_customer, payments,
         geo_centroids, seller_zips, customer_zips,
     )
+
+
+@pytest.fixture(scope="module")
+def fitted_models(feature_table: pd.DataFrame) -> dict[str, Any]:
+    """Fit LR/DT/RF exactly once per test module and share across tests.
+
+    RandomForest(300 trees, unlimited depth) on ~88K rows is slow to fit
+    (multiple minutes, confirmed by reports/diagnostic_rf_*.txt); fitting it
+    fresh in every test would make the suite impractically slow.
+    """
+    x_train, x_test, y_train, y_test, _ = _split_and_encode(feature_table)
+    lr_pipeline, dt_pipeline = _build_pipelines()
+    rf_pipeline = _build_rf_pipeline()
+    lr_pipeline.fit(x_train, y_train)
+    dt_pipeline.fit(x_train, y_train)
+    rf_pipeline.fit(x_train, y_train)
+    return {
+        "lr": lr_pipeline,
+        "dt": dt_pipeline,
+        "rf": rf_pipeline,
+        "x_train": x_train,
+        "y_train": y_train,
+        "x_test": x_test,
+        "y_test": y_test,
+    }
 
 
 def test_feature_columns_equal_allowed_set_exactly(feature_table: pd.DataFrame) -> None:
@@ -392,30 +420,50 @@ def test_train_test_disjoint(feature_table: pd.DataFrame) -> None:
     assert set(x_train.index).isdisjoint(set(x_test.index))
 
 
-def test_late_risk_in_unit_interval(feature_table: pd.DataFrame) -> None:
-    x_train, x_test, y_train, _, _ = _split_and_encode(feature_table)
-    lr_pipeline, _ = _build_pipelines()
-    lr_pipeline.fit(x_train, y_train)
-    late_risk = lr_pipeline.predict_proba(x_test)[:, 1]
-    assert ((late_risk >= 0.0) & (late_risk <= 1.0)).all()
+def test_late_risk_in_unit_interval(fitted_models: dict[str, Any]) -> None:
+    x_test = fitted_models["x_test"]
+    for key in ("lr", "dt", "rf"):
+        late_risk = fitted_models[key].predict_proba(x_test)[:, 1]
+        assert ((late_risk >= 0.0) & (late_risk <= 1.0)).all()
 
 
-def test_auc_below_leak_guardrail(feature_table: pd.DataFrame) -> None:
-    x_train, x_test, y_train, y_test, _ = _split_and_encode(feature_table)
-    lr_pipeline, dt_pipeline = _build_pipelines()
-    lr_pipeline.fit(x_train, y_train)
-    dt_pipeline.fit(x_train, y_train)
-    assert _evaluate(lr_pipeline, x_test, y_test)["roc_auc"] < PREDICT_AUC_LEAK_GUARDRAIL
-    assert _evaluate(dt_pipeline, x_test, y_test)["roc_auc"] < PREDICT_AUC_LEAK_GUARDRAIL
+def test_auc_below_leak_guardrail(fitted_models: dict[str, Any]) -> None:
+    x_test, y_test = fitted_models["x_test"], fitted_models["y_test"]
+    for key in ("lr", "dt", "rf"):
+        auc = _evaluate(fitted_models[key], x_test, y_test)["roc_auc"]
+        assert auc < PREDICT_AUC_LEAK_GUARDRAIL
 
 
-def test_seed_reproducibility(feature_table: pd.DataFrame) -> None:
-    def _fit_predict() -> pd.Series:
-        x_train, x_test, y_train, _, _ = _split_and_encode(feature_table)
-        lr_pipeline, _ = _build_pipelines()
-        lr_pipeline.fit(x_train, y_train)
-        return lr_pipeline.predict_proba(x_test)[:, 1]
+def test_seed_reproducibility(fitted_models: dict[str, Any]) -> None:
+    x_train, x_test = fitted_models["x_train"], fitted_models["x_test"]
+    y_train = fitted_models["y_train"]
 
-    first = _fit_predict()
-    second = _fit_predict()
-    assert (first == second).all()
+    lr_pipeline_2, _ = _build_pipelines()
+    lr_pipeline_2.fit(x_train, y_train)
+    lr_first = fitted_models["lr"].predict_proba(x_test)[:, 1]
+    lr_second = lr_pipeline_2.predict_proba(x_test)[:, 1]
+    assert (lr_first == lr_second).all()
+
+    # RF is the primary model, so its reproducibility matters most: one more
+    # fit (reusing the fixture's fit as the first) rather than two fresh
+    # fits, to avoid a third slow RF fit in this test file.
+    rf_pipeline_2 = _build_rf_pipeline()
+    rf_pipeline_2.fit(x_train, y_train)
+    rf_first = fitted_models["rf"].predict_proba(x_test)[:, 1]
+    rf_second = rf_pipeline_2.predict_proba(x_test)[:, 1]
+    assert (rf_first == rf_second).all()
+
+
+def test_random_forest_uses_allowed_features_exactly(fitted_models: dict[str, Any]) -> None:
+    rf_pipeline = fitted_models["rf"]
+    assert list(rf_pipeline.feature_names_in_) == list(ALLOWED_FEATURES)
+
+
+def test_random_forest_outperforms_committed_models(fitted_models: dict[str, Any]) -> None:
+    x_test, y_test = fitted_models["x_test"], fitted_models["y_test"]
+    lr_auc = _evaluate(fitted_models["lr"], x_test, y_test)["roc_auc"]
+    dt_auc = _evaluate(fitted_models["dt"], x_test, y_test)["roc_auc"]
+    rf_auc = _evaluate(fitted_models["rf"], x_test, y_test)["roc_auc"]
+    # Regression guard: if a future change erodes RF's real, confirmed
+    # advantage (reports/diagnostic_rf_cv.txt), this test should fail.
+    assert rf_auc > dt_auc > lr_auc

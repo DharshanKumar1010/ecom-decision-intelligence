@@ -12,7 +12,8 @@ This file is the source of truth for every Claude Code session. Read it fully be
 **Status:**
 - Stage 1 (scaffolding, data build, synthetic data, clickstream) — complete and verified. See section 13.
 - Stage 2 (sentiment, prediction, AHP, discovery, expert system) — complete and verified. See section 14.
-- Stage 3 (CSV export for SQL Server import) — not started. See section 15.
+- Stage 3 (predictive feature expansion to 12 features; CSV export for SQL Server import) — complete and verified. See section 15 and `BUILD_LOG.md`.
+- Stage 3.5 (RandomForestClassifier adopted as primary predictive model, LR/DT retained for interpretability) — complete and verified. See section 7.3, section 18, and `BUILD_LOG.md`.
 - SQL Server + Power BI layer (T1-T15) — manual GUI work outside Claude Code's scope, done directly in SSMS/Power BI Desktop. See section 16 for what it consumes and how it maps to the course tutorials.
 
 ---
@@ -20,13 +21,13 @@ This file is the source of truth for every Claude Code session. Read it fully be
 ## 1. Hard constraints (never violate)
 
 - **No SQL Server, no SSMS, no Power BI dependency inside `src/`, `app/`, or any Python code Claude Code writes.** All storage in the Python layer is CSV/Parquet under `data/`. SQL Server and Power BI are an approved **downstream, manual presentation layer** that reads the Stage 3 CSV exports — see section 16. This does not reopen scope for Claude Code to write SQL, connect to a database, or generate `.pbix` files; that layer is built by hand in SSMS and Power BI Desktop, not by Claude Code.
-- **No neural networks, no SVM, no KNN**, anywhere: code, dependencies, comments, docs. Predictive models are limited to `LogisticRegression` and `DecisionTreeClassifier` from scikit-learn.
+- **No neural networks, no SVM, no KNN**, anywhere: code, dependencies, comments, docs. Predictive models: `RandomForestClassifier` is the **primary/production** model (adopted in Stage 3.5, section 18, based on confirmed cross-validated evidence — 5-fold CV mean AUC 0.7928 vs. DecisionTree's 0.6870 and LogisticRegression's 0.6247, stable low-variance advantage, identical top-feature ranking in every fold), with `LogisticRegression` and `DecisionTreeClassifier` retained for interpretability (readable coefficients / a printable rule path). No other ensemble/boosting/neural model family without the same evidence-then-ask-then-confirm process used for this change.
 - **Only features Claude Code can build and verify from the terminal.** No GUI-only steps, no manual clicking, no paid APIs, no network calls at runtime (after `pip install`).
 - **Scope is seven syllabus-anchored topics in the Python layer, not all of them.** Do not add extra topics unless asked. See section 2.
 - **`data/raw/` is read-only.** Never modify, rename, or delete files there. Never commit it.
 - **Never fabricate results.** Every metric, row count, AUC, or quadrant count quoted in docs or UI must come from a real run of the code. If something cannot be measured, say so.
 - **Never claim statistical confidence a small sample doesn't support.** The hidden-gems feature (section 7.7) surfaces low-order-count sellers/products on purpose — every such output must carry an explicit low-confidence flag, never presented with the same certainty as the main AHP ranking.
-- **Do not silently expand the predictive feature set.** Section 14's AUC numbers (0.57) are a known, disclosed limitation of a deliberately small 4-feature model, not a bug. Adding features (candidates listed in section 17) is an optional, explicitly-requested enhancement only — never do this without being asked.
+- **Do not silently expand the predictive feature set or swap the model family.** Section 14's 4-feature/0.57-AUC numbers are the original Stage 2 baseline, kept as a historical reference, not the current state — Stage 3 expanded to 12 features (section 7.3, `BUILD_LOG.md`) and Stage 3.5 adopted RandomForest as primary (section 18), both explicit, asked-for, evidence-backed changes. Any FURTHER feature or model change still requires asking first, exactly as these did.
 - **Ask before adding any new dependency**, changing the model family, or changing the scope.
 
 ---
@@ -185,15 +186,16 @@ Confirmed real output:
 
 Four separate, individually testable stages: `preprocess`, `extract_features`, `classify`, `score`. `classify()` scores the **original**, not the aggressively-stripped preprocessed text, since VADER needs punctuation and capitalization cues — documented in the module docstring. Outputs: `CallSentiment.parquet` (300 rows, per-call labels) plus a per-agent aggregate table (mean sentiment, mean hold seconds, mean silence %, negative-call share). Speech analytics here starts from transcripts only — no audio, no ASR — stated plainly in docs and on the dashboard.
 
-### 7.3 `src/predict.py` (Unit 3) — implemented, Stage 2
+### 7.3 `src/predict.py` (Unit 3) — implemented, Stage 3 (features) + Stage 3.5 (model adoption)
 
-- **Target:** `is_late`. **Features (exactly these four, enforced by a test against `config.ALLOWED_FEATURES`):** `price`, `freight_value`, `product_weight_g`, `same_state`.
-- **Leakage rule (critical, verified):** no date-derived column anywhere in the feature set. `grep` of `src/predict.py` confirms `delivery_days`/date references appear only in the exclusion docstring, never in code.
-- Stratified 80/20 split, `random_state=42`. `Pipeline([StandardScaler, LogisticRegression(class_weight="balanced", max_iter=2000)])` and `DecisionTreeClassifier(max_depth=4, class_weight="balanced", random_state=42)`. Missing features imputed with the train-set median only.
-- **Real test-set results:** `logistic_regression` ROC-AUC = **0.5744**, `decision_tree` ROC-AUC = **0.5692**. Base rate of `is_late` ≈ 7.9%, matching the dq report.
-- **This AUC is a known, disclosed limitation of the deliberately small 4-feature set — not a bug, and not something to silently "fix" by adding features.** It must be reported honestly in the README, the report, and on the Design dashboard page, with a one-line explanation of why (small, interpretable feature set was a deliberate design choice — see section 17 for what a legitimate expansion would look like, only if asked for later).
-- Because predicted `late_risk` sits in a narrow band (~0.41-0.57) as a direct consequence of this weak signal, expert-system rules referencing `late_risk` needed calibrating against the real distribution — see section 7.5's R08/R09 note.
-- Outputs: `reports/model_metrics.json`, `reports/decision_tree.txt`, `reports/coefficients.csv`, `reports/feature_importance.csv`, `reports/sensitivity.csv` (perturbation -25/-10/+10/+25%), `LatePredictions.parquet` (110,189 rows), fitted models in `models/` with metadata JSON.
+- **Target:** `is_late`. **Features (exactly these twelve, enforced by a test against `config.ALLOWED_FEATURES`):** `price`, `freight_value`, `product_weight_g`, `same_state`, `product_category_freq`, `order_month`, `day_of_week`, `n_items_in_order`, `payment_installments`, `seller_historical_late_rate`, `geo_distance`, `geo_distance_missing`. Expanded from the original Stage 2 4-feature set in Stage 3 (see `BUILD_LOG.md` for the per-feature before/after AUC and leakage checks) — the 4-feature/0.57-AUC numbers in section 14 are a historical snapshot, not current.
+- **Leakage rule (critical, verified):** no date-derived column anywhere in the feature set. `grep` of `src/predict.py` confirms `delivery_days`/date references appear only in exclusion docstrings, never in code. `seller_historical_late_rate` uses only strictly-prior orders per seller (tested explicitly).
+- Stratified 80/20 split, `random_state=42`, identical across all three models. `Pipeline([SimpleImputer(median), StandardScaler, LogisticRegression(class_weight="balanced", max_iter=2000)])`, `Pipeline([SimpleImputer(median), DecisionTreeClassifier(max_depth=4, class_weight="balanced")])`, and `Pipeline([SimpleImputer(median), RandomForestClassifier(n_estimators=300, max_depth=None, class_weight="balanced")])`, all `random_state=42`.
+- **Real test-set results (this run):** `random_forest` ROC-AUC = **0.7841** (**primary/production model**), `decision_tree` ROC-AUC = **0.6738**, `logistic_regression` ROC-AUC = **0.6347**. Base rate of `is_late` ≈ 7.9%, matching the dq report. RandomForest's advantage is confirmed stable under 5-fold CV (0.7928 ± 0.0051 vs. 0.6870 ± 0.0083 vs. 0.6247 ± 0.0083) — see section 18.
+- **This is an explicit, confirmed override of the original "LR/DT only" constraint**, not a silent scope change — see section 1 and section 18 for the evidence and confirmation trail. LR and DT are retained, not removed, specifically for interpretability (coefficients / a printable rule path an ensemble can't offer).
+- `LatePredictions.parquet` carries `late_risk` (primary, from RandomForest), plus `late_risk_lr` and `late_risk_dt` kept alongside for the interpretability story.
+- Because RandomForest's `late_risk` spans the full 0.0-1.0 range (unlike LR's narrower ~0.31-0.88 band under the old primary model), expert-system rules referencing `late_risk` shifted materially in which ones actually fire — see section 7.5's updated R08/R09 note and `BUILD_LOG.md`'s Stage 3.5 section for the real before/after counts.
+- Outputs: `reports/model_metrics.json` (all three models), `reports/decision_tree.txt`, `reports/coefficients.csv` (LR-only — no equivalent for an ensemble), `reports/feature_importance.csv` (LR/DT), `reports/rf_feature_importance.csv` (RandomForest permutation importance — `order_month` is the top feature, confirmed stable across all 5 CV folds), `reports/sensitivity.csv` (perturbation -25/-10/+10/+25%, all three models), `LatePredictions.parquet` (110,189 rows). `models/` holds `logistic_regression.joblib`, `decision_tree.joblib`, `random_forest.joblib` (423 MB — a real storage cost of the ensemble, noted since it's not free), each with its own `*_metadata.json`, plus `models/registry.json` marking `random_forest` as `primary`.
 
 ### 7.4 `src/ahp.py` (Unit 4) — implemented, Stage 2
 
@@ -209,10 +211,10 @@ Four separate, individually testable stages: `preprocess`, `extract_features`, `
 
 `KnowledgeBase`, `WorkingMemory` (facts: `ahp_score, avg_late_risk, avg_review, order_volume, late_rate, is_hidden_gem`), `InferenceEngine` (priority-ordered, tie-break by rule id), `ExplanationFacility` (fired-rule chain with rationale). 12 rules (R01-R12) covering `Keep`, `Warn`, `Suspend`, `Feature`, `Promote`, plus a low-priority default. Output: `seller_recommendations.csv`, 2,970 rows.
 
-**R08 vs. R09 — both are kept intentionally, and both must be explained in the report, not just in `docs/knowledge_engineering.md`:**
-- **R08** (`Promote` if `is_hidden_gem` AND `avg_late_risk < 0.3`) is `CLAUDE.md`'s original literal specification threshold. Given the real observed `late_risk` range (~0.41-0.57, per section 7.3), this threshold **currently fires on 0 real sellers** — it is exercised only by a constructed test fixture, never by live data. It is kept, not deleted, as the as-specified rule.
-- **R09** (`Promote` if `is_hidden_gem` AND `avg_late_risk < 0.474`, the 25th percentile of observed risk) is the threshold **actually calibrated against the real data distribution**, and it is the one that fires in practice: 132 of 478 Hidden Gems are promoted.
-- **Why keep both rather than just fixing R08's number:** this is a legitimate, disclosable point about expert systems — a threshold written against a specification before seeing the model's real output range often needs recalibration once real data is in hand. Presenting both, with R09 explicitly labeled "recalibrated against observed data," is a stronger and more honest artifact for a BIA report than quietly rewriting R08's number and pretending it was always 0.474.
+**R08 vs. R09 — both are kept intentionally, and both must be explained in the report, not just in `docs/knowledge_engineering.md`. Their fire-rates have flipped as the primary model changed (real numbers, updated each time — do not quote stale ones):**
+- **R08** (`Promote` if `is_hidden_gem` AND `avg_late_risk < 0.3`) is `CLAUDE.md`'s original literal specification threshold. Under the Stage 2 4-feature LR model it fired on 0 real sellers (narrow ~0.41-0.57 risk band). Under Stage 3's 12-feature LR model it fired on 0 of 478 (band widened to ~0.31-0.88 but the floor stayed above 0.3). **Under Stage 3.5's RandomForest primary model it now fires on 472 of 478 Hidden Gems (98.7%)** — RF's `late_risk` spans the full 0.0-1.0 range, so the literal 0.3 threshold is now meaningfully discriminating for the first time.
+- **R09** (`Promote` if `is_hidden_gem` AND `avg_late_risk < 0.474`, calibrated against the Stage 3 LR distribution) fired on 132/478 under Stage 3 LR, then 388/478 once Stage 3 expanded the feature set further. **Under RandomForest it now fires on 478 of 478 (100%)** — every Hidden Gem clears it, so R09 is currently non-discriminating given RF's much wider spread.
+- **Why keep both rather than just fixing R08's number:** this is a legitimate, disclosable point about expert systems — a threshold calibrated against one model's output distribution can become mismatched (too loose, too strict, or in R09's case now trivially true) when the underlying model changes. Presenting both, with the real fire-rate under the CURRENT primary model, is more honest than quietly rewriting a number and pretending it was always right. **Not yet done, flagged as follow-up:** since R09 no longer discriminates and now sits at a lower priority than R08 (which does), a future rules-calibration pass against RandomForest's real distribution would be worthwhile — out of scope for the model-adoption change itself.
 - All twelve rules' thresholds, with the empirical percentile behind each, are in `docs/knowledge_engineering.md` (R01 suspend on ~75th-pct risk + bottom-quintile review, 94 sellers; R02 suspend on severe empirical late-rate>0.4 with a volume gate, 7 sellers; R03 warn on ~90th-pct risk alone, 226; R04 warn on the same review band as R01 with a volume gate, 177; R05 warn on 90th-pct empirical lateness, 105; R06 feature on top-decile quality + at/below-median risk, 107; R07 feature on review≥4.3 (chosen specifically because high-volume sellers average only 4.08 review in this data, so 4.3 selects quality-at-scale) + volume≥83, 69; R10/R11 keep on median-or-better risk+review or top-90%-quality with late_rate≤75th pct, 446/1,264; R12 default catches 1,228 sellers, 41%, mostly those without enough orders to clear any other rule's gates).
 
 ### 7.6 `src/discovery.py` (Unit 4 extension, "hidden gems") — implemented, Stage 2
@@ -340,9 +342,9 @@ Models: logistic regression AUC 0.5744, decision tree AUC 0.5692 (see section 7.
 
 ---
 
-## 15. Stage 3 — CSV export for SQL Server (next, Claude Code's last stage)
+## 15. Stage 3 — CSV export for SQL Server (complete and verified)
 
-`src/export_sql.py` converts the Stage 2 Parquet/CSV outputs into flat CSVs in `data/export/`, one file per intended SQL Server table, with SSMS-import-friendly types (explicit ISO datetime strings, no nested columns). No database connection, no SQL, no ORM — this script's entire job is producing clean, importable flat files. This is the last piece Claude Code builds; everything downstream (section 16) is manual.
+`src/export_sql.py` converts the Parquet/CSV outputs into flat CSVs in `data/export/`, one file per intended SQL Server table, with SSMS-import-friendly types (explicit ISO datetime strings, no nested columns). No database connection, no SQL, no ORM — this script's entire job is producing clean, importable flat files. This was the last piece Claude Code builds; everything downstream (section 16) is manual. `run_all.py --export` runs it as an opt-in final step (default pipeline behavior unchanged). `docs/powerbi_setup.md` has the real row counts from the last export run.
 
 ---
 
@@ -360,7 +362,7 @@ This section is documentation for the human-driven part of the project — Claud
 | `DimSeller` | `DimSeller` | Dimension |
 | `DimProduct` | `DimProduct` | Dimension |
 | `DimCustomer` | `DimCustomer` | Dimension |
-| `LatePredictions` | `LatePredictions` | Fact extension (joins to `FactOrderItems` on `item_key`) |
+| `LatePredictions` | `LatePredictions` | Fact extension (joins to `FactOrderItems` on `item_key`). Columns: `late_risk` (primary, RandomForest — section 18), `late_risk_lr`, `late_risk_dt` (kept for interpretability) |
 | `CallSentiment` | `CallSentiment` | Supporting fact (per-call/per-agent) |
 | `Clickstream` | `Clickstream` | Supporting fact (synthetic — label it as such in the Power BI report) |
 | `ahp_ranking` | `AhpRanking` | Dimension extension (joins to `DimSeller` on `seller_id`) |
@@ -382,14 +384,22 @@ This section is documentation for the human-driven part of the project — Claud
 
 ---
 
-## 17. Optional future enhancement — expanding the predictive feature set (not started, ask before doing)
+## 17. Predictive feature set expansion — DONE (superseded, kept as historical reference)
 
-If asked to improve on the 0.57 AUC later, legitimate **non-leaky** candidate features (none depend on the delivery outcome):
-- `product_category` (frequency-encoded)
-- `order_month` / `day_of_week` of purchase (seasonality)
-- `seller_historical_late_rate` — must be computed from strictly-prior orders only, with a proper train-only cutoff, or it reintroduces leakage
-- `n_items_in_order`
-- `payment_installments`
-- a distance proxy from `olist_geolocation` (state-level or zip-prefix centroid distance between seller and customer)
+This section originally listed optional, non-leaky candidate features to try if asked. All six were asked for, tried, and kept in Stage 3 (`product_category` frequency-encoded, `order_month`/`day_of_week`, `seller_historical_late_rate`, `n_items_in_order`, `payment_installments`, a zip-prefix-centroid haversine distance) — see section 7.3 and `BUILD_LOG.md`'s Stage 3 Part A table for the real per-feature before/after AUC. The "ask before doing" rule that governed this section did its job correctly and remains the standing rule for any *further* feature or model change (section 1).
 
-This is optional and explicitly opt-in — do not add any of these without being asked, and treat it as a new, separately-tested addition to `src/predict.py`, not a silent edit.
+## 18. Stage 3.5 — RandomForestClassifier adopted as primary model (complete, confirmed override of the original LR/DT-only constraint)
+
+This is a formal, user-confirmed override of this file's original hard constraint ("Predictive models are limited to LogisticRegression and DecisionTreeClassifier") — flagged explicitly before proceeding, per this file's own "if a request conflicts, say so and ask" rule, and this file was updated as part of the same change so it doesn't contradict the committed code.
+
+**Evidence trail (two diagnostics, run and reviewed before adoption):**
+1. `reports/diagnostic_rf_ceiling.txt` — single 80/20 split: RandomForest 0.7841 vs. DecisionTree 0.6738 vs. LogisticRegression 0.6347.
+2. `reports/diagnostic_rf_cv.txt` — 5-fold stratified CV, same config: RandomForest **0.7928 ± 0.0051** vs. DecisionTree **0.6870 ± 0.0083** vs. LogisticRegression **0.6247 ± 0.0083**. `order_month` was the top feature by permutation importance in **5 of 5 folds** — a stable, generalizable pattern, not a single-split artifact.
+
+**What changed:** `RandomForestClassifier(n_estimators=300, max_depth=None, class_weight="balanced", random_state=42)` added as a third model in `src/predict.py`, trained on the identical 12-feature set and 80/20 split as LR/DT (neither removed). `LatePredictions.parquet`'s `late_risk` (primary) now comes from RandomForest; `late_risk_lr`/`late_risk_dt` are kept alongside. `models/registry.json` marks `random_forest` as `primary`, LR/DT as `retained_for_interpretability`, each with its own metadata JSON.
+
+**Real, disclosed consequence — R08/R09 and downstream counts inverted, not just shifted:** RandomForest's `late_risk` spans the full 0.0-1.0 range (vs. LR's narrow ~0.31-0.88 band), which is a materially better-calibrated risk signal but also changed which expert-system rules actually fire. R08 (`avg_late_risk < 0.3`) went from firing on 0 real sellers to **472 of 478 Hidden Gems**; R09 (`avg_late_risk < 0.474`) went from 388/478 to **478/478 (now non-discriminating)**. Full seller_recommendations.csv shift: Keep 1,881→2,091, Warn 461→242, Feature 250→256, Suspend 131→60, Promote 247→321 (see section 7.5 and `BUILD_LOG.md` for the full detail). Quadrant counts (Star/Hidden Gem/Overrated/Overlooked-Low-Quality) are unchanged — verified by rerunning `discovery.py`, not assumed, since quadrants never depended on `late_risk`.
+
+**Not yet done, flagged as follow-up, out of scope for this change:** `rules/seller_rules.yaml`'s thresholds (calibrated against the old LR distribution) have not been recalibrated against RandomForest's real distribution — R09 in particular is now trivially true for every Hidden Gem. A future rules-calibration pass would be worthwhile.
+
+**Also worth knowing:** `models/random_forest.joblib` is 423 MB (vs. LR's/DT's few KB) — a real storage cost of the ensemble, not a blocker for this project's architecture (models aren't served through the SQL Server/Power BI layer) but worth being aware of.

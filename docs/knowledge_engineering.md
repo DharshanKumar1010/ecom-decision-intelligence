@@ -68,40 +68,104 @@ Overrated 480, Overlooked-Low-Quality 452** — a near-even four-way split,
 confirming the median default doesn't collapse the classification onto one
 dominant label.
 
-## 5. Promote late-risk cutoffs (rules R08, R09)
+## 5. Promote late-risk cutoffs (rules R08, R09) — recalibrated for Stage 3.5 (RandomForest)
 
-`avg_late_risk` (mean predicted `late_risk` per seller from `src.predict`'s
-logistic regression) across all 2,970 sellers:
+**History, so the numbers below aren't read against the wrong context:**
+Under the original Stage 2 4-feature LR model, `avg_late_risk` ranged
+0.414-0.837 and R08 (`< 0.3`, CLAUDE.md's literal spec) fired on 0 real
+sellers; R09 (`< 0.474`, the 25th percentile of that LR distribution) was
+added as the realistic threshold. Stage 3 expanded to 12 features (still
+LR-primary at the time) and widened the range slightly to 0.310-0.884; R08
+still fired on 0, R09 (still `0.474`) fired on 388/478 Hidden Gems. **Stage
+3.5 adopted RandomForest as the primary model** (CLAUDE.md section 18,
+`BUILD_LOG.md`), whose `late_risk` spans the FULL 0.0-1.0 range — a much
+wider, better-calibrated signal, but it flipped which rule was
+discriminating: R08 jumped to firing on 472/478 (98.7%), and R09's `0.474`
+became non-discriminating at 478/478 (100%, since RF's max observed
+`avg_late_risk` among Hidden Gems is well below 0.474). This section
+documents the real recalibration done in response.
 
-| Percentile | avg_late_risk |
+**Step 1 — check `avg_late_risk` among ALL sellers** (context, not the
+basis for the new threshold — see Step 2 for why):
+
+| Percentile | avg_late_risk (all 2,970 sellers) |
 |---|---|
-| min | 0.414 |
-| 10th | 0.447 |
-| 25th | 0.474 |
-| 50th (median) | 0.503 |
-| 75th | 0.527 |
-| 90th | 0.542 |
-| max | 0.837 |
+| min | 0.000 |
+| 10th | 0.040 |
+| 25th | 0.063 |
+| 50th (median) | 0.106 |
+| 75th | 0.178 |
+| 90th | 0.290 |
+| 95th | 0.414 |
+| max | 1.000 |
 
-**R08** uses `avg_late_risk < 0.3`, the exact value CLAUDE.md section 7.7.2
-specifies for the Promote rule. Checked against the real distribution above,
-**no observed seller currently falls below 0.3** (the minimum is 0.414):
-the deliberately small, non-date feature set (`price`, `freight_value`,
-`product_weight_g`, `same_state`; ROC-AUC ~0.57) only weakly separates risk,
-so predicted probabilities stay in a fairly narrow band around 0.41-0.57
-rather than spanning the full [0, 1] range a stronger model might. R08 is
-kept verbatim because CLAUDE.md specifies it exactly, it is exercised by a
-constructed fact set in `tests/test_expert.py`, and it documents an honest
-limitation (CLAUDE.md section 1: never claim more separation than the model
-actually has) rather than silently dropping the mandated rule.
+**Step 2 — check `avg_late_risk` among the 478 Hidden Gems specifically**
+(the population R08/R09 actually gate, since both require
+`is_hidden_gem == true`; Hidden Gems skew lower-risk than the general
+population because the AHP composite that selects them already weights
+`on_time_rate` at 0.284):
 
-**R09** is the second, realistic Promote variant: `avg_late_risk < 0.474`,
-the **25th percentile** of the real distribution — "safer quartile of
-predicted risk." This threshold does fire on real data (132 of the 478
-Hidden Gem sellers on the last run) and is what actually drives the
-`Promote` action in `reports/seller_recommendations.csv` today.
+| Percentile | avg_late_risk (478 Hidden Gems only) |
+|---|---|
+| min | 0.000 |
+| 10th | 0.036 |
+| 25th | 0.050 |
+| 50th (median) | 0.074 |
+| 75th | 0.109 |
+| 90th | 0.170 |
+| max | 0.413 |
+
+**R08** stays at CLAUDE.md's literal `avg_late_risk < 0.3` — not touched,
+since it is now genuinely meaningful (98.7% of Hidden Gems, 472/478) rather
+than vacuous. Repositioned as the BROADER, lower-priority (78) "worth
+considering" Promote tier.
+
+**R09** recalibrated to `avg_late_risk < 0.05`, approximately the **25th
+percentile among Hidden Gems specifically** (0.050 from the table above,
+not the all-sellers 25th percentile of 0.063 — using the Hidden-Gem-specific
+distribution is the correct reference population, since that's the only
+population these rules ever evaluate). Real match rate: **119 of 478
+(24.9%)** — genuinely discriminating, comparable in spirit to the original
+R09's 132/478 (27.6%) before it drifted to 100% under the wider RF range.
+Repositioned as the STRICTER, higher-priority (80) "high confidence, act
+now" tier: since R09's condition (`< 0.05`) is a strict subset of R08's
+(`< 0.3`), R09 fires first whenever both match, and R08 only ends up being
+the reported rule for the broader `[0.05, 0.3)` band. Verified on the real
+pipeline run: of 315 sellers with `action == Promote`, 58 are attributed to
+R09 (the tight, high-confidence band) and 257 to R08 (the broader band).
+
+**Why recalibrate R09 rather than drop it or add a third rule:** dropping
+R09 would leave only R08's now-broad 98.7% threshold, losing the
+high-confidence/broader distinction the two-tier design always intended.
+Adding a third rule (R13) would work but duplicates the existing "R08 vs.
+R09" narrative already built into this doc, `BUILD_LOG.md`, and
+`CLAUDE.md` for no real benefit — reusing R09's id for its recalibrated
+role keeps that continuity intact.
+
+**Known, disclosed limitation — NOT fixed in this pass:** R01, R03, R06,
+and R10 also key off `avg_late_risk`, with thresholds (0.53, 0.55, 0.503)
+calibrated against the old LR distribution (median ~0.5). Checked against
+the table above, RF's real median is 0.106 — meaning R06's/R10's "median
+risk" condition (`< 0.503` / `<= 0.503`) is no longer close to the median
+at all (0.503 sits around the **96th-97th percentile** of the real RF
+distribution), and R01's/R03's "top quartile/decile risk" conditions
+(`> 0.53` / `> 0.55`) now correspond to roughly the **top 2-3%**, not
+25%/10%. These rules still function (checked: R01 combo -> 55 real
+sellers, R03 -> 78, R06 combo -> 187, R10 combo -> 815 — none are
+vacuous), but their percentile framing in section 6 below is now
+inaccurate and was not recalibrated as part of this change, since it was
+out of scope for "recalibrate R08/R09." Flagged in `CLAUDE.md` section 18
+as follow-up work.
 
 ## 6. Remaining expert-system rule thresholds (`rules/seller_rules.yaml`)
+
+**Note on staleness:** the `avg_late_risk`-dependent rows below (R01, R03,
+R06, R10) were computed against the Stage 2/3 LR model's distribution and
+were NOT recalibrated when Stage 3.5 adopted RandomForest — see section 5's
+"known, disclosed limitation" note for the real, current match counts
+against RF's distribution (R01: 55, R03: 78, R06: 187, R10: 815, vs. the
+stale numbers quoted below). The rules still fire and aren't vacuous, but
+their percentile framing here is outdated.
 
 All checked against the same `SellerFacts.parquet` run (2,970 sellers;
 `avg_review` percentiles: min 1.0, 10th 3.2, 25th 3.90, 50th 4.27, 75th 4.70,

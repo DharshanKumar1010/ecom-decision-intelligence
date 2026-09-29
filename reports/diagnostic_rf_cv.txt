@@ -1,0 +1,42 @@
+Diagnostic: RandomForest 5-fold CV stability check (one-off, NOT part of the pipeline)
+==========================================================================================
+
+StratifiedKFold(n_splits=5, shuffle=True, random_state=42), identical 12 features and is_late target for all three models.
+
+Per-fold ROC-AUC:
+  LogisticRegression   [0.6128, 0.6297, 0.6367, 0.6258, 0.6188]
+  DecisionTree         [0.6916, 0.6797, 0.6921, 0.6748, 0.6967]
+  RandomForest         [0.7938, 0.7939, 0.8005, 0.7846, 0.7912]
+
+Mean +/- std across folds:
+  LogisticRegression   0.6247 +/- 0.0083
+  DecisionTree         0.6870 +/- 0.0083
+  RandomForest         0.7928 +/- 0.0051
+
+Unusual RandomForest folds (|AUC - mean| > 1.5 x std, std=0.0051):
+  Fold 3: AUC=0.8005 (mean=0.7928)
+  Fold 4: AUC=0.7846 (mean=0.7928)
+
+RandomForest top feature by permutation importance, per fold:
+  Fold 1: order_month
+  Fold 2: order_month
+  Fold 3: order_month
+  Fold 4: order_month
+  Fold 5: order_month
+  order_month is the top feature in 5/5 folds -- STABLE ranking.
+
+RandomForest permutation importance, mean +/- std across folds (n_repeats=5 per fold):
+  order_month                  +0.1650 (+/- 0.0089)
+  seller_historical_late_rate  +0.0589 (+/- 0.0028)
+  geo_distance                 +0.0467 (+/- 0.0034)
+  freight_value                +0.0279 (+/- 0.0043)
+  n_items_in_order             +0.0267 (+/- 0.0007)
+  product_weight_g             +0.0111 (+/- 0.0021)
+  price                        +0.0111 (+/- 0.0013)
+  day_of_week                  +0.0094 (+/- 0.0013)
+  same_state                   +0.0090 (+/- 0.0013)
+  product_category_freq        +0.0078 (+/- 0.0022)
+  payment_installments         +0.0058 (+/- 0.0011)
+  geo_distance_missing         +0.0001 (+/- 0.0001)
+
+Verdict: RandomForest's advantage over the committed models is STABLE under 5-fold CV: mean AUC 0.7928 +/- 0.0051 vs. DecisionTree's 0.6870 +/- 0.0083 and LogisticRegression's 0.6247 +/- 0.0083 -- the gap (+0.1058) holds up across folds with low fold-to-fold variance, so this is real, generalizable signal the simpler committed models leave on the table, not a single-split artifact.

@@ -1,0 +1,23 @@
+Diagnostic: RandomForest signal-ceiling check (one-off, NOT part of the pipeline)
+====================================================================================
+
+Test-set ROC-AUC comparison (identical train/test split, identical 12 features):
+  LogisticRegression (committed, Stage 3):   0.6347
+  DecisionTreeClassifier (committed, Stage 3): 0.6738
+  RandomForestClassifier (this diagnostic, n_estimators=300): 0.7841
+
+Permutation feature importance (RandomForest, test set, scoring=roc_auc):
+  order_month                  +0.1557 (+/- 0.0048)
+  seller_historical_late_rate  +0.0593 (+/- 0.0047)
+  geo_distance                 +0.0528 (+/- 0.0030)
+  freight_value                +0.0293 (+/- 0.0031)
+  n_items_in_order             +0.0288 (+/- 0.0018)
+  product_weight_g             +0.0141 (+/- 0.0020)
+  price                        +0.0133 (+/- 0.0015)
+  product_category_freq        +0.0111 (+/- 0.0018)
+  same_state                   +0.0099 (+/- 0.0018)
+  day_of_week                  +0.0089 (+/- 0.0016)
+  payment_installments         +0.0048 (+/- 0.0015)
+  geo_distance_missing         +0.0003 (+/- 0.0001)
+
+Interpretation: RandomForest beats the best committed model (DT) by +0.1103 AUC -- meaningfully more signal exists in these 12 features than LR/DT extracted; a more expressive model captures real interactions the simpler models miss.

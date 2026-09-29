@@ -7,13 +7,37 @@
 # tie via ascending rule id): Suspend (100/98) > Feature (90/88) >
 # Promote (80/78) > Warn (70/68/66) > Keep (50/48) > default (1).
 #
-# R08 is the exact Promote rule from CLAUDE.md section 7.7.2
-# (avg_late_risk < 0.3). On the current model's predicted late_risk range
-# (observed min ~0.41 across sellers, since the deliberately small feature
-# set only weakly separates risk), this rule does not currently fire on any
-# real seller — it is kept verbatim because CLAUDE.md specifies it exactly,
-# and is exercised by a constructed fact set in tests/test_expert.py. R09 is
-# the second, realistic Promote variant that does fire on real data.
+# R08/R09 recalibration history (Stage 3.5, RandomForest adopted as the
+# primary model — see BUILD_LOG.md and CLAUDE.md section 18):
+#
+# Under the original LR-based model, R08 (avg_late_risk < 0.3, CLAUDE.md
+# section 7.7.2's literal spec) never fired on real data (observed min was
+# ~0.31-0.41 depending on the feature set at the time), and R09
+# (< 0.474, calibrated against LR's distribution) was the rule that did the
+# real work, firing on a meaningfully discriminating subset of Hidden Gems.
+#
+# RandomForest's late_risk spans the FULL 0.0-1.0 range (much wider than
+# LR's), which flipped this: R08's 0.3 threshold now fires on 472/478
+# (98.7%) of Hidden Gems, and R09's 0.474 threshold became NON-discriminating
+# (478/478, 100% — its condition is looser than the highest late_risk any
+# Hidden Gem now has). Recalibrated as a genuine two-tier system rather than
+# dropping one rule:
+#   - R09 (priority 80, now the HIGHER-priority tier): a new, TIGHTER
+#     threshold (< 0.05, ~25th percentile of avg_late_risk AMONG Hidden
+#     Gems specifically, not all sellers) identifying the ~25% of Hidden
+#     Gems with genuinely low predicted risk -- "high confidence, promote
+#     now." This is the numeric analogue of what R09 originally did for LR:
+#     the realistic, actually-discriminating threshold, now recalibrated
+#     against RandomForest's real distribution.
+#   - R08 (priority 78, now the LOWER-priority tier): kept at CLAUDE.md's
+#     literal 0.3 threshold, now the broader "worth considering" tier for
+#     Hidden Gems R09 doesn't already catch. Real numbers behind both are in
+#     docs/knowledge_engineering.md.
+# They are not redundant: R09's condition is a strict subset of R08's
+# (every seller under 0.05 is also under 0.3), so when both match, the
+# higher-priority R09 fires and its more specific "because" rationale is
+# what's shown -- R08 only ends up firing (and being reported) for the
+# broader band between the two thresholds.
 
 - id: R01
   priority: 100
@@ -47,21 +71,21 @@
   then: Feature
   because: "High order volume (90th percentile or above) sustained alongside a strong average review (top quartile) — scale without sacrificing quality."
 
-- id: R08
+- id: R09
   priority: 80
+  if:
+    - {fact: is_hidden_gem, op: "==", value: true}
+    - {fact: avg_late_risk, op: "<", value: 0.05}
+  then: Promote
+  because: "Hidden Gem quadrant member in roughly the lowest-risk quartile of Hidden Gems specifically (RandomForest predicted late-delivery risk) — high-confidence Promote candidate, worth acting on now rather than just worth considering."
+
+- id: R08
+  priority: 78
   if:
     - {fact: is_hidden_gem, op: "==", value: true}
     - {fact: avg_late_risk, op: "<", value: 0.3}
   then: Promote
-  because: "Strong quality signals with low visibility and very low predicted late-delivery risk. A good candidate to feature and grow, not just rank by past volume."
-
-- id: R09
-  priority: 78
-  if:
-    - {fact: is_hidden_gem, op: "==", value: true}
-    - {fact: avg_late_risk, op: "<", value: 0.474}
-  then: Promote
-  because: "Hidden Gem quadrant member (high AHP quality, low order volume) with predicted late-delivery risk in the safer quartile of all sellers — the realistic Promote threshold given this model's predicted-risk range."
+  because: "Strong quality signals with low visibility and predicted late-delivery risk below CLAUDE.md's original Promote threshold. A reasonable candidate to feature and grow, broader (and lower-confidence) than R09's tighter band."
 
 - id: R03
   priority: 70
