@@ -11,10 +11,11 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.config import ALLOWED_FEATURES, PREDICT_AUC_LEAK_GUARDRAIL
+from src.config import ALLOWED_FEATURES, PREDICT_AUC_LEAK_GUARDRAIL, RAW_DATA_DIR, verify_raw_files
 from src.predict import (
     _build_pipelines,
     _evaluate,
+    _load_payments,
     _split_and_encode,
     build_feature_table,
     encode_product_category_frequency,
@@ -38,7 +39,8 @@ def feature_table(
     dim_seller: pd.DataFrame,
     dim_customer: pd.DataFrame,
 ) -> pd.DataFrame:
-    return build_feature_table(fact_order_items, dim_product, dim_seller, dim_customer)
+    payments = _load_payments()
+    return build_feature_table(fact_order_items, dim_product, dim_seller, dim_customer, payments)
 
 
 def test_feature_columns_equal_allowed_set_exactly(feature_table: pd.DataFrame) -> None:
@@ -89,8 +91,9 @@ def test_order_month_and_day_of_week_derived_correctly() -> None:
     })
     dim_seller = pd.DataFrame({"seller_id": ["S1"], "seller_state": ["SP"]})
     dim_customer = pd.DataFrame({"customer_id": ["C1"], "customer_state": ["SP"]})
+    payments = pd.DataFrame({"order_id": ["o1", "o2"], "payment_installments": [1, 3]})
 
-    result = build_feature_table(fact, dim_product, dim_seller, dim_customer)
+    result = build_feature_table(fact, dim_product, dim_seller, dim_customer, payments)
 
     assert result.loc[0, "order_month"] == 3.0
     assert result.loc[0, "day_of_week"] == 0.0  # Monday == 0 (pandas dayofweek convention)
@@ -118,14 +121,37 @@ def test_n_items_in_order_counts_items_sharing_an_order_id() -> None:
     })
     dim_seller = pd.DataFrame({"seller_id": ["S1"], "seller_state": ["SP"]})
     dim_customer = pd.DataFrame({"customer_id": ["C1"], "customer_state": ["SP"]})
+    payments = pd.DataFrame({"order_id": ["o1", "o2"], "payment_installments": [2, 1]})
 
-    result = build_feature_table(fact, dim_product, dim_seller, dim_customer)
+    result = build_feature_table(fact, dim_product, dim_seller, dim_customer, payments)
     by_key = result.set_index("item_key")
 
     assert by_key.loc["o1_1", "n_items_in_order"] == 3.0
     assert by_key.loc["o1_2", "n_items_in_order"] == 3.0
     assert by_key.loc["o1_3", "n_items_in_order"] == 3.0
     assert by_key.loc["o2_1", "n_items_in_order"] == 1.0
+
+
+def test_load_payments_aggregates_multi_row_orders_via_max() -> None:
+    try:
+        verify_raw_files()
+    except FileNotFoundError:
+        pytest.skip("raw data not available in data/raw/")
+
+    payments = _load_payments()
+    assert set(payments.columns) == {"order_id", "payment_installments"}
+    assert payments["order_id"].is_unique
+
+    # Some orders have >1 raw payment row (split payments across methods);
+    # confirm the aggregate is the MAX, not the first row or sum.
+    raw = pd.read_csv(
+        RAW_DATA_DIR / "olist_order_payments_dataset.csv",
+        usecols=["order_id", "payment_installments"],
+    )
+    multi_row_order = raw.groupby("order_id").size().loc[lambda s: s > 1].index[0]
+    expected_max = raw.loc[raw["order_id"] == multi_row_order, "payment_installments"].max()
+    actual = payments.loc[payments["order_id"] == multi_row_order, "payment_installments"].iloc[0]
+    assert actual == expected_max
 
 
 def test_split_and_encode_uses_train_only_frequencies(feature_table: pd.DataFrame) -> None:

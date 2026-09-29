@@ -50,6 +50,7 @@ from src.config import (
     PREDICT_AUC_LEAK_GUARDRAIL,
     PREDICT_SENSITIVITY_PCTS,
     PROCESSED_DATA_DIR,
+    RAW_DATA_DIR,
     REPORTS_DIR,
     SEED,
     get_logger,
@@ -62,7 +63,30 @@ _TARGET = "is_late"
 
 _PRECOMPUTED_FEATURES: tuple[str, ...] = ("price", "freight_value", "product_weight_g",
                                            "same_state", "order_month", "day_of_week",
-                                           "n_items_in_order")
+                                           "n_items_in_order", "payment_installments")
+
+
+def _load_payments() -> pd.DataFrame:
+    """Load raw order payments, aggregated to one row per order_id.
+
+    Multiple payment rows per order (2,961 of 99,440 orders in the raw
+    data) reflect split payments across payment methods (e.g. a voucher
+    plus a credit card in the same order). `payment_installments` is
+    aggregated via MAX across an order's payment rows: it captures the
+    longest real installment commitment on the order and is deterministic
+    regardless of row order, unlike taking the first row; summing
+    installment counts across different payment methods isn't a
+    meaningful quantity. Not read via `build_tables.py`, which doesn't
+    ingest this raw file — see the module docstring.
+
+    Returns:
+        DataFrame with columns `order_id`, `payment_installments`.
+    """
+    payments = pd.read_csv(
+        RAW_DATA_DIR / "olist_order_payments_dataset.csv",
+        usecols=["order_id", "payment_installments"],
+    )
+    return payments.groupby("order_id", as_index=False)["payment_installments"].max()
 
 
 def build_feature_table(
@@ -70,6 +94,7 @@ def build_feature_table(
     dim_product: pd.DataFrame,
     dim_seller: pd.DataFrame,
     dim_customer: pd.DataFrame,
+    payments: pd.DataFrame,
 ) -> pd.DataFrame:
     """Assemble the modeling table: item_key, precomputed features, is_late.
 
@@ -84,6 +109,10 @@ def build_feature_table(
     the count of item rows sharing an `order_id`, also fixed at order
     placement.
 
+    `payment_installments` is left-joined from `payments` (see
+    `_load_payments`) on `order_id`; an order absent from the raw payments
+    file is left `NaN`, for the pipeline's train-median imputer.
+
     Args:
         fact: FactOrderItems (must contain item_key, order_id, seller_id,
             product_id, customer_id, price, freight_value,
@@ -92,6 +121,7 @@ def build_feature_table(
             product_category_name_english).
         dim_seller: DimSeller (must contain seller_id, seller_state).
         dim_customer: DimCustomer (must contain customer_id, customer_state).
+        payments: output of `_load_payments` (order_id, payment_installments).
 
     Returns:
         DataFrame with `item_key`, every precomputable feature in
@@ -118,6 +148,8 @@ def build_feature_table(
     table["same_state"] = (table["seller_state"] == table["customer_state"]).astype(float)
     table["order_month"] = table["order_purchase_timestamp"].dt.month.astype(float)
     table["day_of_week"] = table["order_purchase_timestamp"].dt.dayofweek.astype(float)
+    table = table.merge(payments, on="order_id", how="left")
+    table["payment_installments"] = table["payment_installments"].astype(float)
 
     result = table[["item_key", *_PRECOMPUTED_FEATURES, "product_category", "is_late"]].copy()
 
@@ -317,8 +349,9 @@ def main() -> None:
     dim_product = pd.read_parquet(PROCESSED_DATA_DIR / "DimProduct.parquet")
     dim_seller = pd.read_parquet(PROCESSED_DATA_DIR / "DimSeller.parquet")
     dim_customer = pd.read_parquet(PROCESSED_DATA_DIR / "DimCustomer.parquet")
+    payments = _load_payments()
 
-    table = build_feature_table(fact, dim_product, dim_seller, dim_customer)
+    table = build_feature_table(fact, dim_product, dim_seller, dim_customer, payments)
     x_train, x_test, y_train, y_test, category_freq_map = _split_and_encode(table)
     logger.info("Train/test split: %d / %d rows, base rate %.4f%%", len(x_train), len(x_test),
                 float(y_test.mean()) * 100)

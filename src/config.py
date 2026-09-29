@@ -111,6 +111,7 @@ ALLOWED_FEATURES: tuple[str, ...] = (
     "order_month",
     "day_of_week",
     "n_items_in_order",
+    "payment_installments",
 )
 
 # --------------------------------------------------------------------------
