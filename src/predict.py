@@ -61,7 +61,7 @@ _TARGET = "is_late"
 
 
 _PRECOMPUTED_FEATURES: tuple[str, ...] = ("price", "freight_value", "product_weight_g",
-                                           "same_state")
+                                           "same_state", "order_month", "day_of_week")
 
 
 def build_feature_table(
@@ -77,9 +77,14 @@ def build_feature_table(
     comes from `dim_product`. No date or delivery_days column is read or
     joined here.
 
+    `order_month`/`day_of_week` come from `order_purchase_timestamp` — the
+    time the customer placed the order, known well before any delivery
+    outcome exists, not a delivered/estimated date.
+
     Args:
         fact: FactOrderItems (must contain item_key, seller_id, product_id,
-            customer_id, price, freight_value, is_late).
+            customer_id, price, freight_value, order_purchase_timestamp,
+            is_late).
         dim_product: DimProduct (must contain product_id, product_weight_g,
             product_category_name_english).
         dim_seller: DimSeller (must contain seller_id, seller_state).
@@ -93,7 +98,7 @@ def build_feature_table(
         and `is_late`.
     """
     table = fact[["item_key", "seller_id", "product_id", "customer_id", "price",
-                  "freight_value", "is_late"]].copy()
+                  "freight_value", "order_purchase_timestamp", "is_late"]].copy()
     table = table.merge(
         dim_product[["product_id", "product_weight_g", "product_category_name_english"]],
         on="product_id",
@@ -105,6 +110,8 @@ def build_feature_table(
         dim_customer[["customer_id", "customer_state"]], on="customer_id", how="left"
     )
     table["same_state"] = (table["seller_state"] == table["customer_state"]).astype(float)
+    table["order_month"] = table["order_purchase_timestamp"].dt.month.astype(float)
+    table["day_of_week"] = table["order_purchase_timestamp"].dt.dayofweek.astype(float)
 
     result = table[["item_key", *_PRECOMPUTED_FEATURES, "product_category", "is_late"]].copy()
 

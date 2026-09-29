@@ -108,6 +108,8 @@ ALLOWED_FEATURES: tuple[str, ...] = (
     "product_weight_g",
     "same_state",
     "product_category_freq",
+    "order_month",
+    "day_of_week",
 )
 
 # --------------------------------------------------------------------------

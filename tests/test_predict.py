@@ -66,6 +66,37 @@ def test_product_category_frequency_fit_and_encode() -> None:
     assert encoded.iloc[2] == pytest.approx(0.0)  # never observed in training
 
 
+def test_order_month_and_day_of_week_derived_correctly() -> None:
+    fact = pd.DataFrame(
+        {
+            "item_key": ["i1", "i2"],
+            "seller_id": ["S1", "S1"],
+            "product_id": ["P1", "P1"],
+            "customer_id": ["C1", "C1"],
+            "price": [10.0, 10.0],
+            "freight_value": [1.0, 1.0],
+            "order_purchase_timestamp": [
+                pd.Timestamp("2018-03-05 10:00:00"),  # Monday, March
+                pd.Timestamp("2017-12-25 08:00:00"),  # Monday, December
+            ],
+            "is_late": [0, 1],
+        }
+    )
+    dim_product = pd.DataFrame({
+        "product_id": ["P1"], "product_weight_g": [500.0],
+        "product_category_name_english": ["toys"],
+    })
+    dim_seller = pd.DataFrame({"seller_id": ["S1"], "seller_state": ["SP"]})
+    dim_customer = pd.DataFrame({"customer_id": ["C1"], "customer_state": ["SP"]})
+
+    result = build_feature_table(fact, dim_product, dim_seller, dim_customer)
+
+    assert result.loc[0, "order_month"] == 3.0
+    assert result.loc[0, "day_of_week"] == 0.0  # Monday == 0 (pandas dayofweek convention)
+    assert result.loc[1, "order_month"] == 12.0
+    assert result.loc[1, "day_of_week"] == 0.0
+
+
 def test_split_and_encode_uses_train_only_frequencies(feature_table: pd.DataFrame) -> None:
     x_train, x_test, y_train, y_test, freq_map = _split_and_encode(feature_table)
     assert set(x_train.columns) == set(ALLOWED_FEATURES)

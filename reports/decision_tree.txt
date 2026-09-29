@@ -1,37 +1,46 @@
-|--- same_state <= 0.50
-|   |--- freight_value <= 13.77
-|   |   |--- freight_value <= 13.47
-|   |   |   |--- freight_value <= 9.32
+|--- order_month <= 3.50
+|   |--- order_month <= 1.50
+|   |   |--- same_state <= 0.50
+|   |   |   |--- product_weight_g <= 9075.00
 |   |   |   |   |--- class: 0
-|   |   |   |--- freight_value >  9.32
-|   |   |   |   |--- class: 0
-|   |   |--- freight_value >  13.47
-|   |   |   |--- product_category_freq <= 0.00
+|   |   |   |--- product_weight_g >  9075.00
 |   |   |   |   |--- class: 1
-|   |   |   |--- product_category_freq >  0.00
+|   |   |--- same_state >  0.50
+|   |   |   |--- price <= 129.94
 |   |   |   |   |--- class: 0
-|   |--- freight_value >  13.77
-|   |   |--- product_category_freq <= 0.09
-|   |   |   |--- product_weight_g <= 10237.50
+|   |   |   |--- price >  129.94
+|   |   |   |   |--- class: 0
+|   |--- order_month >  1.50
+|   |   |--- freight_value <= 11.82
+|   |   |   |--- price <= 36.83
+|   |   |   |   |--- class: 0
+|   |   |   |--- price >  36.83
+|   |   |   |   |--- class: 0
+|   |   |--- freight_value >  11.82
+|   |   |   |--- same_state <= 0.50
 |   |   |   |   |--- class: 1
-|   |   |   |--- product_weight_g >  10237.50
+|   |   |   |--- same_state >  0.50
 |   |   |   |   |--- class: 1
-|   |   |--- product_category_freq >  0.09
-|   |   |   |--- price <= 21.94
+|--- order_month >  3.50
+|   |--- order_month <= 10.50
+|   |   |--- freight_value <= 11.72
+|   |   |   |--- order_month <= 7.50
 |   |   |   |   |--- class: 0
-|   |   |   |--- price >  21.94
+|   |   |   |--- order_month >  7.50
 |   |   |   |   |--- class: 1
-|--- same_state >  0.50
-|   |--- price <= 1.70
-|   |   |--- class: 1
-|   |--- price >  1.70
-|   |   |--- product_weight_g <= 10446.50
-|   |   |   |--- freight_value <= 7.09
+|   |   |--- freight_value >  11.72
+|   |   |   |--- order_month <= 5.50
 |   |   |   |   |--- class: 0
-|   |   |   |--- freight_value >  7.09
+|   |   |   |--- order_month >  5.50
 |   |   |   |   |--- class: 0
-|   |   |--- product_weight_g >  10446.50
-|   |   |   |--- freight_value <= 19.83
+|   |--- order_month >  10.50
+|   |   |--- freight_value <= 14.10
+|   |   |   |--- order_month <= 11.50
 |   |   |   |   |--- class: 0
-|   |   |   |--- freight_value >  19.83
+|   |   |   |--- order_month >  11.50
+|   |   |   |   |--- class: 0
+|   |   |--- freight_value >  14.10
+|   |   |   |--- order_month <= 11.50
+|   |   |   |   |--- class: 1
+|   |   |   |--- order_month >  11.50
 |   |   |   |   |--- class: 1
