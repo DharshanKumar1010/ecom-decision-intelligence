@@ -70,6 +70,7 @@ def test_order_month_and_day_of_week_derived_correctly() -> None:
     fact = pd.DataFrame(
         {
             "item_key": ["i1", "i2"],
+            "order_id": ["o1", "o2"],
             "seller_id": ["S1", "S1"],
             "product_id": ["P1", "P1"],
             "customer_id": ["C1", "C1"],
@@ -95,6 +96,36 @@ def test_order_month_and_day_of_week_derived_correctly() -> None:
     assert result.loc[0, "day_of_week"] == 0.0  # Monday == 0 (pandas dayofweek convention)
     assert result.loc[1, "order_month"] == 12.0
     assert result.loc[1, "day_of_week"] == 0.0
+
+
+def test_n_items_in_order_counts_items_sharing_an_order_id() -> None:
+    fact = pd.DataFrame(
+        {
+            "item_key": ["o1_1", "o1_2", "o1_3", "o2_1"],
+            "order_id": ["o1", "o1", "o1", "o2"],
+            "seller_id": ["S1", "S1", "S1", "S1"],
+            "product_id": ["P1", "P1", "P1", "P1"],
+            "customer_id": ["C1", "C1", "C1", "C1"],
+            "price": [10.0, 10.0, 10.0, 10.0],
+            "freight_value": [1.0, 1.0, 1.0, 1.0],
+            "order_purchase_timestamp": [pd.Timestamp("2018-01-01")] * 4,
+            "is_late": [0, 0, 0, 1],
+        }
+    )
+    dim_product = pd.DataFrame({
+        "product_id": ["P1"], "product_weight_g": [500.0],
+        "product_category_name_english": ["toys"],
+    })
+    dim_seller = pd.DataFrame({"seller_id": ["S1"], "seller_state": ["SP"]})
+    dim_customer = pd.DataFrame({"customer_id": ["C1"], "customer_state": ["SP"]})
+
+    result = build_feature_table(fact, dim_product, dim_seller, dim_customer)
+    by_key = result.set_index("item_key")
+
+    assert by_key.loc["o1_1", "n_items_in_order"] == 3.0
+    assert by_key.loc["o1_2", "n_items_in_order"] == 3.0
+    assert by_key.loc["o1_3", "n_items_in_order"] == 3.0
+    assert by_key.loc["o2_1", "n_items_in_order"] == 1.0
 
 
 def test_split_and_encode_uses_train_only_frequencies(feature_table: pd.DataFrame) -> None:

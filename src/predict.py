@@ -61,7 +61,8 @@ _TARGET = "is_late"
 
 
 _PRECOMPUTED_FEATURES: tuple[str, ...] = ("price", "freight_value", "product_weight_g",
-                                           "same_state", "order_month", "day_of_week")
+                                           "same_state", "order_month", "day_of_week",
+                                           "n_items_in_order")
 
 
 def build_feature_table(
@@ -79,12 +80,14 @@ def build_feature_table(
 
     `order_month`/`day_of_week` come from `order_purchase_timestamp` — the
     time the customer placed the order, known well before any delivery
-    outcome exists, not a delivered/estimated date.
+    outcome exists, not a delivered/estimated date. `n_items_in_order` is
+    the count of item rows sharing an `order_id`, also fixed at order
+    placement.
 
     Args:
-        fact: FactOrderItems (must contain item_key, seller_id, product_id,
-            customer_id, price, freight_value, order_purchase_timestamp,
-            is_late).
+        fact: FactOrderItems (must contain item_key, order_id, seller_id,
+            product_id, customer_id, price, freight_value,
+            order_purchase_timestamp, is_late).
         dim_product: DimProduct (must contain product_id, product_weight_g,
             product_category_name_english).
         dim_seller: DimSeller (must contain seller_id, seller_state).
@@ -97,8 +100,11 @@ def build_feature_table(
         itself a model feature — encoded post-split by `_split_and_encode`),
         and `is_late`.
     """
-    table = fact[["item_key", "seller_id", "product_id", "customer_id", "price",
+    table = fact[["item_key", "order_id", "seller_id", "product_id", "customer_id", "price",
                   "freight_value", "order_purchase_timestamp", "is_late"]].copy()
+    table["n_items_in_order"] = table.groupby("order_id")["item_key"].transform("size").astype(
+        float
+    )
     table = table.merge(
         dim_product[["product_id", "product_weight_g", "product_category_name_english"]],
         on="product_id",
