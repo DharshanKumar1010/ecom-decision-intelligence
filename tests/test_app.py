@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 
 import pandas as pd
+import plotly.io as pio
 import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
@@ -145,10 +146,21 @@ def test_one_sans_serif_family_and_no_serif_anywhere() -> None:
     assert 'font = "sans serif"' in toml
 
 
-def test_streamlit_config_is_light_and_has_no_telemetry() -> None:
+def test_streamlit_config_is_dark_and_has_no_telemetry() -> None:
     text = (config.PROJECT_ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8")
-    assert 'base = "light"' in text and 'backgroundColor = "#FFFFFF"' in text
+    assert 'base = "dark"' in text and 'backgroundColor = "#0C1015"' in text
+    assert 'secondaryBackgroundColor = "#141A22"' in text
     assert "gatherUsageStats = false" in text
+
+
+def test_no_white_boxes_in_app_code_or_chart_template() -> None:
+    pattern = re.compile(r"#fff(?:fff)?|\"white\"|rgba\(\s*255,\s*255,\s*255,\s*0\.[3-9]",
+                         re.IGNORECASE)
+    for path in APP_DIR.rglob("*.py"):
+        assert not pattern.search(path.read_text(encoding="utf-8")), path.name
+    layout = pio.templates["olist_dark"].layout
+    assert layout.paper_bgcolor == "rgba(0,0,0,0)" and layout.plot_bgcolor == "rgba(0,0,0,0)"
+    assert layout.legend.y < 0  # legend below the plot
 
 
 # --------------------------------------------------------------------------
@@ -189,9 +201,49 @@ def test_intelligence_kpis_match_fact_table_and_synthetic_is_tagged(real_outputs
     assert metrics["Late-delivery rate"] == f"{fact['is_late'].mean() * 100:.2f}%"
     assert metrics["Average review score"] == f"{fact['review_score'].mean():.2f} / 5"
     text = _markdown(at)
-    assert 'class="tag">Synthetic data' in text
-    assert "no audio and no speech recognition" in text
+    assert text.count('class="tag">Synthetic data') >= 2  # funnel and call sections
+    assert any("no audio and no speech recognition" in c.value for c in at.caption)
     assert any("Of every 100 sessions that start" in c.value for c in at.caption)
+    assert "How customers sound on calls" in text
+
+
+def test_intelligence_funnel_uses_thousands_separators_and_a_negative_share_chart(
+    real_outputs: None,
+) -> None:
+    at = _run("Intelligence")
+    charts = [json.loads(c.proto.spec) for c in at.get("plotly_chart")]
+    funnel = charts[0]["data"][0]
+    assert funnel["type"] == "funnel" and "%{value:,}" in funnel["texttemplate"]
+    assert funnel["x"] == [70000, 15000, 9000, 6000] or len(funnel["x"]) == 4
+    calls = pd.read_parquet(config.PROCESSED_DATA_DIR / "CallSentiment.parquet")
+    bars = charts[1]["data"][0]
+    assert bars["type"] == "bar" and len(bars["x"]) == calls["agent_id"].nunique()
+
+
+def test_design_shows_the_largest_sensitivity_effects(real_outputs: None) -> None:
+    at = _run("Design")
+    assert "What if an input changes?" in _markdown(at)
+    sens = pd.read_csv(config.REPORTS_DIR / "sensitivity.csv")
+    rf = sens[sens["model"] == "random_forest"]
+    strongest = rf.loc[rf["mean_late_risk_change"].abs().idxmax()]
+    bars = json.loads(at.get("plotly_chart")[1].proto.spec)["data"][0]
+    assert bars["type"] == "bar" and len(bars["y"]) == 5
+    assert max(abs(v) for v in _decode(bars["x"])) == pytest.approx(
+        abs(strongest["mean_late_risk_change"])
+    )
+    assert any("largest effects" in c.value for c in at.caption)
+
+
+def _decode(values: object) -> list[float]:
+    """Plotly may ship numpy arrays as {dtype, bdata}; return plain floats either way."""
+    if isinstance(values, dict):
+        import base64
+
+        import numpy as np
+
+        raw = np.frombuffer(base64.b64decode(values["bdata"]), dtype=values["dtype"])
+        return [float(v) for v in raw]
+    return [float(v) for v in values]  # type: ignore[attr-defined]
 
 
 def test_design_kpis_come_from_the_metrics_file(real_outputs: None) -> None:
@@ -291,7 +343,8 @@ def test_implementation_default_seller_is_not_the_default_rule(real_outputs: Non
     assert row["rule_id"] != "R12"
     assert _displayed_action(at) == row["action"]
     assert len(at.metric) == 3  # three fact numbers
-    assert "Why:" in _markdown(at)
+    why = [m.value for m in at.markdown if "Why:" in m.value]
+    assert len(why) == 1 and why[0].count("Why:") == 1
 
 
 def test_implementation_example_dropdown_replaces_the_buttons(real_outputs: None) -> None:
@@ -355,7 +408,8 @@ def test_dss_catalog_row_counts_are_read_live(real_outputs: None) -> None:
     assert {"Clickstream", "CallTranscripts", "CallSentiment"} <= synthetic
     text = _markdown(at)
     assert text.count('class="flow-box"') == 4
-    assert "SQL Server" in text
+    assert 'class="flow-note"' in text and "SQL Server" in text
+    assert "height: 16rem" in text  # all four boxes share one fixed height
 
 
 # --------------------------------------------------------------------------
@@ -372,15 +426,42 @@ def test_app_never_derives_lift_or_gain_from_in_sample_predictions(real_outputs:
             assert banned not in text, (name, banned)
 
 
-def test_theme_colours_meet_contrast_requirements_on_white_and_grey() -> None:
+def _lab(hex_color: str) -> tuple[float, float, float]:
+    """sRGB hex -> CIE L*a*b* (D65), for a normal-vision colour-difference check."""
+    h = hex_color.lstrip("#")
+    rgb = [int(h[i : i + 2], 16) / 255 for i in (0, 2, 4)]
+    lin = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
+    x = 0.4124 * lin[0] + 0.3576 * lin[1] + 0.1805 * lin[2]
+    y = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+    z = 0.0193 * lin[0] + 0.1192 * lin[1] + 0.9505 * lin[2]
+
+    def f(t: float) -> float:
+        return t ** (1 / 3) if t > 0.008856 else 7.787 * t + 16 / 116
+
+    fx, fy, fz = f(x / 0.95047), f(y), f(z / 1.08883)
+    return 116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)
+
+
+def test_theme_colours_meet_contrast_requirements_on_the_dark_surfaces() -> None:
     for group in (theme.QUADRANTS, theme.ACTIONS):
         for name, swatch in group.items():
-            for surface in (theme.WHITE, theme.SURFACE):
+            for surface in (theme.PAGE, theme.SURFACE):
                 assert theme.contrast_ratio(swatch.color, surface) >= 3.0, (name, "graphic")
                 assert theme.contrast_ratio(swatch.text, surface) >= 4.5, (name, "text")
     for ink in (theme.TEXT, theme.TEXT_MUTED, theme.ACCENT):
-        for surface in (theme.WHITE, theme.SURFACE):
+        for surface in (theme.PAGE, theme.SURFACE):
             assert theme.contrast_ratio(ink, surface) >= 4.5, ink
+    for step in theme.FUNNEL_RAMP:  # dark funnel labels on the gold steps
+        assert theme.contrast_ratio(theme.FUNNEL_TEXT, step) >= 4.5, step
+
+
+def test_quadrant_colours_are_distinguishable_from_each_other() -> None:
+    import itertools
+    import math
+
+    colours = {name: _lab(s.color) for name, s in theme.QUADRANTS.items()}
+    for (a, ca), (b, cb) in itertools.combinations(colours.items(), 2):
+        assert math.dist(ca, cb) >= 25, (a, b)  # CIE76; blue/rose and green/orange included
 
 
 def test_semantic_colours_exist_only_for_actions_and_quadrants() -> None:

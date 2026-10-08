@@ -68,8 +68,12 @@ def _flow(n_tables: int, n_rules: int) -> None:
         body = "".join(f"<p>{line}</p>" for line in lines)
         col.markdown(f'<div class="flow-box"><h4>{title}</h4>{body}</div>',
                      unsafe_allow_html=True)
-    note("Read left to right: data feeds models, models feed rules, and rules reach people. "
-         "SQL Server and Power BI are a downstream layer built by hand from the exported CSVs.")
+    st.markdown(
+        '<div class="flow-note">Read left to right: data feeds models, models feed rules, and '
+        "rules reach people. SQL Server and Power BI are a downstream layer built by hand from "
+        "the exported CSVs.</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _catalog() -> None:

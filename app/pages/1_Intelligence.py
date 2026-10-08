@@ -61,8 +61,9 @@ def _funnel_chart(funnel: pd.DataFrame) -> go.Figure:
         go.Funnel(
             y=[_STAGE_LABELS.get(s, s) for s in funnel.index],
             x=funnel["sessions"].tolist(),
-            textinfo="value+percent initial",
-            textfont={"color": "#FFFFFF"},
+            texttemplate="%{value:,}<br>%{percentInitial:.0%}",
+            hovertemplate="%{y}: %{value:,} sessions<extra></extra>",
+            textfont={"color": theme.FUNNEL_TEXT},
             marker={"color": list(theme.FUNNEL_RAMP)},
             connector={"line": {"color": theme.BORDER}},
         )
@@ -88,12 +89,33 @@ def _devices(by_device: pd.DataFrame) -> None:
     show(fig)
 
 
-def _call_sentiment() -> None:
+def _agent_summary() -> pd.DataFrame:
     calls = load_parquet("CallSentiment.parquet")
-    agents = sentiment.aggregate_by_agent(calls).reset_index()
+    return sentiment.aggregate_by_agent(calls).reset_index()
+
+
+def _negative_share_chart(agents: pd.DataFrame) -> go.Figure:
+    ordered = agents.sort_values("negative_call_share", ascending=False)
+    fig = go.Figure(
+        go.Bar(
+            x=ordered["agent_id"],
+            y=ordered["negative_call_share"] * 100,
+            marker={"color": theme.ACCENT},
+            hovertemplate="%{x}: %{y:.0f}% negative<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        height=280,
+        xaxis={"title": "Agent", "type": "category"},
+        yaxis={"title": "Calls labelled negative (%)", "ticksuffix": "%"},
+    )
+    return fig
+
+
+def _call_details(agents: pd.DataFrame) -> None:
     means = dict(zip(agents["agent_id"], agents["mean_sentiment"], strict=True))
     st.markdown(explain.sentiment_range_sentence(means))
-    agents["silence_pct_display"] = agents["mean_silence_pct"] * 100
+    agents = agents.assign(silence_pct_display=agents["mean_silence_pct"] * 100)
     limit = float(agents["mean_sentiment"].abs().max()) or 1.0
     fig = px.scatter(
         agents, x="mean_hold_seconds", y="silence_pct_display", size="call_count",
@@ -123,8 +145,6 @@ def _call_sentiment() -> None:
             "call_count": "Calls",
         },
     )
-    note("Speech analytics here is transcript-based only: no audio and no speech recognition "
-         "are involved. Sentiment is a VADER score of the transcript text.")
 
 
 def render() -> None:
@@ -150,6 +170,12 @@ def render() -> None:
     show(_funnel_chart(funnel))
     caption(explain.funnel_sentence(funnel))
 
+    agents = _agent_summary()
+    section("How customers sound on calls", synthetic=True)
+    show(_negative_share_chart(agents))
+    caption("Sentiment is scored from call transcripts only (a VADER score of the text); no "
+            "audio and no speech recognition are involved.")
+
     with technical():
         st.markdown("**Funnel table**")
         st.dataframe(
@@ -172,7 +198,7 @@ def render() -> None:
         section("Funnel by device", synthetic=True)
         _devices(by_device)
         section("Call sentiment by agent", synthetic=True)
-        _call_sentiment()
+        _call_details(agents)
         note(f"KPIs are computed live from {len(fact):,} real Olist order items.")
 
 

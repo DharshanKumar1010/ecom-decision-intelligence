@@ -227,8 +227,13 @@ technical examiner can still reach every number. UI and explanation layer only.
   **Technical details** expander at the bottom (tables, matrices, sensitivity, tree text,
   rules, near-miss, catalog), and a small grey footer (syllabus topic · analytics type ·
   management level). Home is a title, a short description, the six pages and one note.
-- Light theme (`.streamlit/config.toml`), one accent colour plus greys, and one sans-serif
-  family for everything. Semantic colours exist only for the five actions and the four
+  Intelligence ("How customers sound on calls") and Design ("What if an input changes?")
+  each carry one small second section so that the call-sentiment and sensitivity syllabus
+  topics are visible without opening Technical details.
+- Dark theme (`.streamlit/config.toml`: page #0C1015, surface #141A22, text #F2EFE9, no
+  white boxes anywhere, transparent chart backgrounds), one gold accent (#D9B26F, 9.6:1
+  on the page, so it stays readable for bars and text), and one sans-serif family for
+  everything. Semantic colours exist only for the five actions and the four
   seller groups, are muted, and are identical on every page. Synthetic data gets a small
   grey "Synthetic data" tag beside its section title, nothing louder.
 - Files: `app/_theme.py` (tokens and the Plotly template), `app/_components.py` (template
@@ -246,9 +251,13 @@ KPI cards. Review feedback was that it was too busy and confusing: every one of 
 added a second thing to learn before the data. It also rendered numbers and some sentences
 in a serif fallback, which looked inconsistent. All of it was removed rather than tuned:
 the content that Plain English mode showed was kept, and everything technical moved into
-the one expander. The dark palette was replaced by a light one re-validated for a white
-surface (the quadrant ring of Star, Hidden Gem, Overlooked-Low-Quality and Overrated; the
-violet/magenta pair that failed the normal-vision floor was swapped for violet/orange).
+the one expander. The simplification pass first moved to a light theme, then the dark theme
+was restored on request and the semantic colours were re-derived and re-validated on the
+dark surface (all pairs, with the dataviz validator). Blue and violet were too close under
+red-green colour blindness (delta E about 2), so Overlooked-Low-Quality became a rose and
+Overrated an orange; green vs orange and blue vs rose are well separated, and rose vs
+green under deuteranopia is the one pair that relies on the second cue (corner labels and
+legend).
 Tests for the removed features (modes, glossary, tour navigation, header pills, callouts,
 gauge, dark-theme config, glyph uniqueness, Home pipeline-status warning) were removed
 with them; `tests/test_explain.py` was kept whole.
@@ -274,7 +283,7 @@ any serif font name appears).
   second copy of the operator logic. A test checks, for all 2,970 sellers and all 12
   rules, that "this rule would fire" equals the real `InferenceEngine` match.
 - Supersedes the Stage 4 note about validating colours for the light surface only (the
-  light palette is now validated on white).
+  palette is now validated on the dark surface the app uses).
 
 **Gates.** `ruff check .`, `mypy src` (12 files) and `pytest --ignore=tests/test_predict.py`
 all pass (counts in the final report of the change); `test_predict.py` still cannot run

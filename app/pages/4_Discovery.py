@@ -92,7 +92,7 @@ def _scatter(quadrants: pd.DataFrame, quality_line: float, popularity_line: floa
     for quadrant, x, y, xanchor, yanchor, text in _CORNERS:
         fig.add_annotation(
             x=x, y=y, xref="paper", yref="paper", showarrow=False, xanchor=xanchor,
-            yanchor=yanchor, text=f"<b>{text}</b>", bgcolor="rgba(255,255,255,0.85)",
+            yanchor=yanchor, text=f"<b>{text}</b>", bgcolor="rgba(12,16,21,0.8)",
             font={"size": 12, "color": theme.QUADRANTS[quadrant].text},
         )
     fig.update_layout(

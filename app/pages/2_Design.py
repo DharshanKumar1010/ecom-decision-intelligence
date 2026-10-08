@@ -96,6 +96,44 @@ def _tradeoff_sentence() -> str:
     )
 
 
+_TOP_EFFECTS = 5
+
+
+def _largest_effects(sensitivity: pd.DataFrame) -> pd.DataFrame:
+    """For the primary model, each input's single largest nudge effect; the top few overall."""
+    rf = sensitivity[sensitivity["model"] == "random_forest"].copy()
+    rf["abs_change"] = rf["mean_late_risk_change"].abs()
+    biggest = rf.sort_values("abs_change", ascending=False).drop_duplicates("feature")
+    top = biggest.head(_TOP_EFFECTS).sort_values("mean_late_risk_change")
+    nudge = top["perturbation"].map(lambda p: "flip 0 → 1" if p == _FLIP else p)
+    top["label"] = [
+        f"{explain.feature_label(f)} ({n})" for f, n in zip(top["feature"], nudge, strict=True)
+    ]
+    return top
+
+
+def _effects_chart(top: pd.DataFrame) -> go.Figure:
+    fig = go.Figure(
+        go.Bar(
+            x=top["mean_late_risk_change"], y=top["label"], orientation="h",
+            marker={"color": theme.ACCENT},
+            text=[f"{v:+.3f}" for v in top["mean_late_risk_change"]],
+            textposition="outside", cliponaxis=False,
+            hovertemplate="%{y}: %{x:+.4f}<extra></extra>",
+        )
+    )
+    limit = float(top["mean_late_risk_change"].abs().max()) * 1.4
+    fig.update_layout(
+        height=260,
+        xaxis={"title": "Average change in predicted late risk", "range": [-limit, limit],
+               "showgrid": True, "gridcolor": theme.GRID, "zeroline": True,
+               "zerolinecolor": theme.TEXT_MUTED},
+        yaxis={"showgrid": False},
+        margin={"l": 8, "r": 40, "t": 8, "b": 8},
+    )
+    return fig
+
+
 def _heatmap(sensitivity: pd.DataFrame, model: str) -> go.Figure:
     subset = sensitivity[sensitivity["model"] == model]
     scaled = subset[subset["perturbation"].isin(_SCALES)]
@@ -243,6 +281,13 @@ def render() -> None:
         dict(zip(importance["feature"], importance["importance_mean"], strict=True))
     ))
     st.markdown(_tradeoff_sentence())
+
+    section("What if an input changes?")
+    show(_effects_chart(_largest_effects(load_report_csv("sensitivity.csv"))))
+    caption("Random forest, held-out test set: the average change in predicted late risk (a "
+            "probability from 0 to 1) when one input is nudged and the others are held fixed. "
+            f"The {_TOP_EFFECTS} largest effects are shown; the full view is in Technical "
+            "details.")
 
     with technical():
         _technical(metrics, cv, importance)

@@ -28,19 +28,21 @@ Each page: what to click, then two sentences to say. Roughly 45 seconds each.
 
 ### 1. Intelligence: "What is happening in the marketplace?"
 
-*Click:* hover the funnel.
+*Click:* hover the funnel, then scroll to "How customers sound on calls".
 
 > "Of every 100 visits, about 21 add something to the cart, 13 reach checkout and 9 buy, and
-> about 7.9% of delivered items arrive late. The funnel is synthetic, as the small grey tag
-> says, because Olist has no real clickstream; the numbers above it are real."
+> about 7.9% of delivered items arrive late. The funnel and the call chart are synthetic, as
+> the small tags say, because Olist has no real clickstream or calls; sentiment comes from
+> transcripts only, with no audio."
 
 ### 2. Design: "How likely is an order to arrive late, and why?"
 
-*Click:* point at the ranking score, then the bars.
+*Click:* point at the ranking score, then the bars, then "What if an input changes?".
 
 > "A random forest ranks a late order above an on-time one about 78% of the time, where 50% is
 > a coin flip. Its strongest signal is the month of purchase, then the seller's own past
-> lateness and the distance, which shows what the model leans on, not what causes lateness."
+> lateness and the distance, which shows what the model leans on, not what causes lateness.
+> The small chart below shows which single nudge moves the predicted risk most."
 
 ### 3. Choice: "Which established sellers are best overall?"
 

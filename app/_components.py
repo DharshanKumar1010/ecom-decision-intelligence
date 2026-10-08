@@ -44,7 +44,9 @@ h2, h3 {{ font-weight: 600; }}
   padding-top: 0.75rem; border-top: 1px solid {theme.BORDER}; }}
 .note {{ color: {theme.TEXT_MUTED}; font-size: 0.85rem; }}
 .action-word {{ font-size: 2.6rem; font-weight: 650; line-height: 1.1; margin: 0.2rem 0 0.4rem 0; }}
-.flow-box {{ border: 1px solid {theme.BORDER}; border-radius: 0.4rem; padding: 1rem 1.1rem; }}
+.flow-box {{ border: 1px solid {theme.BORDER}; border-radius: 0.4rem;
+  padding: 1rem 1.1rem; height: 16rem; box-sizing: border-box; overflow: hidden; }}
+.flow-note {{ color: {theme.TEXT_MUTED}; font-size: 0.85rem; margin-top: 1.75rem; }}
 .flow-box h4 {{ margin: 0 0 0.5rem 0; font-size: 1.05rem; }}
 .flow-box p {{ margin: 0.15rem 0; color: {theme.TEXT_MUTED}; font-size: 0.9rem; }}
 [data-testid="stExpander"] {{ border: 1px solid {theme.BORDER}; box-shadow: none; }}
