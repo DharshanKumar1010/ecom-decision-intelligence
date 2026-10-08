@@ -289,7 +289,8 @@ def test_choice_top_table_uses_short_ids_and_keeps_the_discovery_pointer(
     real_outputs: None,
 ) -> None:
     at = _run("Choice")
-    assert f"{config.AHP_MIN_ORDERS}+ orders" in _markdown(at) and "Discovery" in _markdown(at)
+    assert f"{config.AHP_MIN_ORDERS}+ items sold" in _markdown(at)
+    assert "Discovery" in _markdown(at)
     top = next(df.value for df in at.dataframe if "seller" in df.value.columns)
     assert len(top) == 10 and top["seller"].str.len().max() <= 9
 
@@ -300,8 +301,8 @@ def test_discovery_caution_counts_line_table_and_download(real_outputs: None) ->
     assert any(
         c.value == (
             "This page surfaces sellers with strong quality signals but low order volume. "
-            f"Sellers with fewer than {n} orders are flagged low-confidence; a few good "
-            "reviews on a handful of orders is promising, not proof."
+            f"Sellers with fewer than {n} items sold are flagged low-confidence; a few good "
+            "reviews on a handful of items sold is promising, not proof."
         )
         for c in at.caption
     )
@@ -317,17 +318,19 @@ def test_discovery_caution_counts_line_table_and_download(real_outputs: None) ->
     assert len(tables) == 2  # Actionable, then Watchlist
     actionable, watchlist = tables
     for table in tables:
-        assert list(table.columns) == ["Seller", "Orders", "Average review", "Confidence"]
+        assert list(table.columns) == ["Seller", "Items sold", "Average review", "Confidence"]
         assert table["Seller"].str.len().max() <= 9
     gems = quadrants[quadrants["quadrant"] == "Hidden Gem"]
     n_actionable = int((gems["confidence"] == "normal").sum())
     n_watch = int((gems["confidence"] == "low").sum())
-    assert f"Actionable ({n}+ orders): {n_actionable:,} sellers" in text
-    assert f"Watchlist (under {n} orders): {n_watch:,} sellers" in text
-    assert (actionable["Confidence"] == "normal").all() and (actionable["Orders"] >= n).all()
+    assert f"Stronger evidence ({n}+ items sold): {n_actionable:,} sellers" in text
+    assert f"Early signal (under {n} items sold): {n_watch:,} sellers" in text
+    assert (actionable["Confidence"] == "normal").all() and (actionable["Items sold"] >= n).all()
     assert len(actionable) == min(10, n_actionable)
-    assert watchlist["Confidence"].str.startswith("low").all() and (watchlist["Orders"] < n).all()
+    assert watchlist["Confidence"].str.startswith("low").all()
+    assert (watchlist["Items sold"] < n).all()
     assert "by definition, hidden gems have under" in text.lower()
+    assert "items sold, so most picks" in text
     assert "short rather than padded" not in text  # 44 Actionable gems: no padding message
     assert at.get("download_button")
     assert len(at.get("plotly_chart")) == 1
@@ -604,3 +607,42 @@ def test_dss_architecture_marks_missing_catalog_files_instead_of_failing(
     catalog = next(t.value for t in at.table if "Rows" in t.value.columns)
     assert (catalog["Rows"] == "—").all()
     assert catalog["Status"].str.contains("missing").all()
+
+
+# --------------------------------------------------------------------------
+# Wording: "items sold" for seller-level counts, "delivered orders" for distinct orders
+# --------------------------------------------------------------------------
+
+
+def test_seller_level_counts_are_labelled_items_sold_not_orders(real_outputs: None) -> None:
+    for name in ("Choice", "Discovery", "Implementation"):
+        at = _run(name)
+        labels = [m.label for m in at.metric]
+        columns = [c for df in at.dataframe for c in df.value.columns]
+        assert "Orders" not in labels and "Orders" not in columns, name
+        assert "Minimum orders" not in labels, name
+    assert "Items sold" in _metrics(_run("Implementation"))
+    assert "Minimum items sold" in _metrics(_run("Choice"))
+    assert "Delivered orders" in _metrics(_run("Intelligence"))  # distinct orders keep "orders"
+
+
+def test_technical_details_explain_items_sold_versus_delivered_orders(
+    real_outputs: None,
+) -> None:
+    note = "Items sold counts order lines"
+    for name in ("Intelligence", "Choice", "Discovery", "Implementation"):
+        assert note in _markdown(_run(name)), name
+
+
+def test_choice_full_table_shows_raw_reviews_and_keeps_the_shrunk_columns(
+    real_outputs: None,
+) -> None:
+    at = _run("Choice")
+    full = next(df.value for df in at.dataframe if "avg_review_raw" in df.value.columns)
+    assert {"avg_review_raw", "on_time_rate_raw", "avg_review_score", "on_time_rate"} <= set(
+        full.columns
+    )
+    assert "pulled toward the marketplace mean" in _markdown(at)
+    assert (full["avg_review_raw"].between(1, 5)).all()
+    # Shrinkage never moves a value past the marketplace mean, so it stays between them.
+    assert (full["avg_review_score"] - full["avg_review_raw"]).abs().max() < 1.5

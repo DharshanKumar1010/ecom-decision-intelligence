@@ -15,6 +15,7 @@ import streamlit as st
 from app import _theme as theme
 from app._common import load_report_csv
 from app._components import (
+    ITEMS_SOLD_NOTE,
     caption,
     footer,
     kpis,
@@ -38,7 +39,7 @@ _LABELS = {
     "avg_review_score": "Average review score",
     "on_time_rate": "On-time delivery rate",
     "avg_price": "Average price (lower is better)",
-    "order_volume": "Order volume",
+    "order_volume": "Items sold",
 }
 _N = len(config.AHP_CRITERIA)
 _PAIRS = [(i, j) for i in range(_N) for j in range(i + 1, _N)]
@@ -119,7 +120,7 @@ def _top_table(ranking: pd.DataFrame, weights: np.ndarray) -> None:
             "seller": "Seller",
             "seller_state": "State",
             "ahp_score": st.column_config.NumberColumn("Score", format="%.3f"),
-            "order_volume": st.column_config.NumberColumn("Orders", format="%d"),
+            "order_volume": st.column_config.NumberColumn("Items sold", format="%d"),
         },
     )
 
@@ -144,6 +145,15 @@ def _full_ranking(ranking: pd.DataFrame, weights: np.ndarray, lambda_max: float,
             "Weight (configured)": st.column_config.NumberColumn(format="percent"),
         },
     )
+    note(
+        "Average review and on-time rate are pulled toward the marketplace mean before "
+        "scoring (empirical-Bayes shrinkage counted in distinct orders: prior strength "
+        f"{config.AHP_SHRINKAGE_K_REVIEW} for reviews and {config.AHP_SHRINKAGE_K_ON_TIME} "
+        "for on-time rate), so a few "
+        "perfect reviews cannot outrank a long, strong record. The table shows the raw "
+        "values; the shrunk values used for scoring are in the last two columns. "
+        + ITEMS_SOLD_NOTE
+    )
     st.markdown(f"**All {len(ranking):,} established sellers (configured weights)**")
     st.dataframe(
         ranking,
@@ -153,16 +163,23 @@ def _full_ranking(ranking: pd.DataFrame, weights: np.ndarray, lambda_max: float,
             "seller_id", "seller_state", "ahp_score",
             "contribution_avg_review_score", "contribution_on_time_rate",
             "contribution_avg_price", "contribution_order_volume",
-            "avg_review_score", "on_time_rate", "avg_price", "order_volume",
+            "avg_review_raw", "on_time_rate_raw", "avg_price", "order_volume",
+            "avg_review_score", "on_time_rate",
         ],
         column_config={
             "seller_id": "Seller",
             "seller_state": "State",
             "ahp_score": st.column_config.NumberColumn("AHP score", format="%.4f"),
-            "avg_review_score": st.column_config.NumberColumn("Avg review", format="%.2f"),
-            "on_time_rate": st.column_config.NumberColumn("On-time rate", format="percent"),
+            "avg_review_raw": st.column_config.NumberColumn(
+                "Avg review (per order)", format="%.2f"),
+            "on_time_rate_raw": st.column_config.NumberColumn(
+                "On-time rate (per order)", format="percent"),
             "avg_price": st.column_config.NumberColumn("Avg price (BRL)", format="%.2f"),
-            "order_volume": "Orders",
+            "order_volume": "Items sold",
+            "avg_review_score": st.column_config.NumberColumn(
+                "Avg review (shrunk)", format="%.3f"),
+            "on_time_rate": st.column_config.NumberColumn(
+                "On-time rate (shrunk)", format="percent"),
         },
     )
 
@@ -181,8 +198,8 @@ def render() -> None:
     with main:
         kpis([
             ("Established sellers ranked", f"{len(ranking):,}", None),
-            ("Minimum orders", f"{config.AHP_MIN_ORDERS}",
-             "Only sellers with at least this many orders are ranked here. See the Discovery "
+            ("Minimum items sold", f"{config.AHP_MIN_ORDERS}",
+             "Only sellers with at least this many items sold are ranked here. See the Discovery "
              "page for good sellers with fewer."),
             ("Consistency ratio", f"{cr:.3f}",
              "Below 0.10 means the pairwise judgments do not contradict each other."),
@@ -195,7 +212,7 @@ def render() -> None:
             section(f"Top {_TOP_N} sellers")
             _top_table(ranking, weights)
         caption(explain.cr_sentence(cr, config.AHP_CR_THRESHOLD))
-        note(f"This ranking only includes sellers with {config.AHP_MIN_ORDERS}+ orders; the "
+        note(f"This ranking only includes sellers with {config.AHP_MIN_ORDERS}+ items sold; the "
              "Discovery page covers good sellers with fewer.")
 
 

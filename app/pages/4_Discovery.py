@@ -14,6 +14,7 @@ import streamlit as st
 from app import _theme as theme
 from app._common import load_parquet, load_report_csv, quadrant_thresholds
 from app._components import (
+    ITEMS_SOLD_NOTE,
     caption,
     footer,
     note,
@@ -71,15 +72,15 @@ def _scatter(quadrants: pd.DataFrame, quality_line: float, popularity_line: floa
                     ],
                     hovertemplate=(
                         f"<b>{quadrant}</b><br>Seller %{{customdata[0]}}<br>"
-                        "Orders: %{x}<br>Quality score: %{y:.3f}<br>"
+                        "Items sold: %{x}<br>Quality score: %{y:.3f}<br>"
                         "Confidence: %{customdata[1]}<extra></extra>"
                     ),
                 )
             )
     # Legend keys for the confidence encoding (not data).
     for symbol, label in (
-        ("circle", f"Filled: {_N_CONF}+ orders"),
-        ("circle-open", f"Hollow: under {_N_CONF} orders (low confidence)"),
+        ("circle", f"Filled: {_N_CONF}+ items sold"),
+        ("circle-open", f"Hollow: under {_N_CONF} items sold (low confidence)"),
     ):
         fig.add_trace(go.Scatter(
             x=[None], y=[None], mode="markers", name=label,
@@ -96,7 +97,7 @@ def _scatter(quadrants: pd.DataFrame, quality_line: float, popularity_line: floa
             font={"size": 12, "color": theme.QUADRANTS[quadrant].text},
         )
     fig.update_layout(
-        xaxis={"title": "Popularity: orders sold (log scale)", "type": "log", "showgrid": False},
+        xaxis={"title": "Popularity: items sold (log scale)", "type": "log", "showgrid": False},
         yaxis={"title": "Quality: AHP score (0 to 1)", "showgrid": True, "gridcolor": theme.GRID},
         height=540,
         margin={"l": 8, "r": 8, "t": 8, "b": 8},
@@ -118,16 +119,16 @@ def _counts_line(quadrants: pd.DataFrame) -> None:
 def _tier_table(rows: pd.DataFrame) -> None:
     shown = pd.DataFrame({
         "Seller": rows["seller_id"].map(short_id),
-        "Orders": rows["order_volume"],
+        "Items sold": rows["order_volume"],
         "Average review": rows["avg_review"],
         "Confidence": rows["confidence"].map(
-            {"low": f"low (under {_N_CONF} orders)", "normal": "normal"}
+            {"low": f"low (under {_N_CONF} items sold)", "normal": "normal"}
         ),
     })
     st.dataframe(
         shown, hide_index=True, width="stretch",
         column_config={
-            "Orders": st.column_config.NumberColumn(format="%d"),
+            "Items sold": st.column_config.NumberColumn(format="%d"),
             "Average review": st.column_config.NumberColumn(format="%.2f"),
         },
     )
@@ -140,15 +141,15 @@ def _gems_tables(quadrants: pd.DataFrame, popularity_line: float) -> None:
     counts = everyone["tier"].value_counts()
 
     section("Hidden gems by confidence")
-    note(f"By definition, hidden gems have under {popularity_line:,.0f} orders, so most picks "
+    note(f"By definition, hidden gems have under {popularity_line:,.0f} items sold, so most picks "
          "are directional rather than proven.")
-    for tier, label in ((TIER_ACTIONABLE, f"Actionable ({_N_CONF}+ orders)"),
-                        (TIER_WATCHLIST, f"Watchlist (under {_N_CONF} orders)")):
+    for tier, label in ((TIER_ACTIONABLE, f"Stronger evidence ({_N_CONF}+ items sold)"),
+                        (TIER_WATCHLIST, f"Early signal (under {_N_CONF} items sold)")):
         total = int(counts.get(tier, 0))
         st.markdown(f"**{label}: {total:,} sellers**")
         rows = everyone[everyone["tier"] == tier].head(_TOP_N)
         if tier == TIER_ACTIONABLE and total < _TOP_N:
-            st.markdown(f"Only {total} hidden gems have {_N_CONF}+ orders, so this list is "
+            st.markdown(f"Only {total} hidden gems have {_N_CONF}+ items sold, so this list is "
                         "short rather than padded.")
         if total:
             _tier_table(rows)
@@ -171,8 +172,8 @@ def render() -> None:
     show(_scatter(quadrants, quality_line, popularity_line))
     caption(
         "This page surfaces sellers with strong quality signals but low order volume. "
-        f"Sellers with fewer than {_N_CONF} orders are flagged low-confidence; a few good "
-        "reviews on a handful of orders is promising, not proof."
+        f"Sellers with fewer than {_N_CONF} items sold are flagged low-confidence; a few good "
+        "reviews on a handful of items sold is promising, not proof."
     )
     note('Here "good" means sound business quality (reviews and on-time delivery), not food '
          "or nutrition: Olist has no such data.")
@@ -186,11 +187,12 @@ def render() -> None:
             st.markdown(f"- {explain.quadrant_sentence(q, int(counts.get(q, 0)), definitions[q])}")
         st.markdown(
             f"Split lines: quality at least {quality_line:.3f} AHP score and popularity at "
-            f"least {popularity_line:,.0f} orders count as high (medians of the "
+            f"least {popularity_line:,.0f} items sold count as high (medians of the "
             f"{len(quadrants):,} AHP-eligible sellers). Quality is the AHP score recomputed at "
-            f"{config.DISCOVERY_MIN_ORDERS} orders, lower than the Choice page's "
+            f"{config.DISCOVERY_MIN_ORDERS} items sold, lower than the Choice page's "
             f"{config.AHP_MIN_ORDERS}."
         )
+        note(ITEMS_SOLD_NOTE)
         st.markdown("**Top hidden gems per tier, with full seller ids**")
         st.dataframe(top_hidden_gems(quadrants, n=_TOP_N, tiered=True), hide_index=True,
                      width="stretch")

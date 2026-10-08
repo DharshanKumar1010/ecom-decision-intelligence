@@ -15,6 +15,7 @@ import streamlit as st
 from app import _theme as theme
 from app._common import data_key, load_parquet, processed_path
 from app._components import (
+    ITEMS_SOLD_NOTE,
     caption,
     footer,
     kpis,
@@ -199,7 +200,8 @@ def render() -> None:
         _devices(by_device)
         section("Call sentiment by agent", synthetic=True)
         _call_details(agents)
-        note(f"KPIs are computed live from {len(fact):,} real Olist order items.")
+        note(f"KPIs are computed live from {len(fact):,} real Olist order items. "
+             + ITEMS_SOLD_NOTE)
 
 
 run_page(render)

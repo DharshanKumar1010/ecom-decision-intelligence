@@ -220,10 +220,10 @@ DATA_CATALOG: tuple[CatalogEntry, ...] = (
                  "late_risk (RandomForest, primary), late_risk_lr, late_risk_dt."),
     CatalogEntry("SellerFacts", "parquet", "Per-seller facts consumed by the expert system "
                  "(AHP score, avg late risk, reviews, volume, late rate, hidden-gem flag)."),
-    CatalogEntry("ahp_ranking", "csv", "AHP ranking of established sellers (>= 30 orders) "
+    CatalogEntry("ahp_ranking", "csv", "AHP ranking of established sellers (>= 30 items sold) "
                  "with per-criterion contributions."),
     CatalogEntry("discovery_quadrants", "csv", "Quality-vs-popularity quadrant and confidence "
-                 "flag per AHP-eligible seller (>= 5 orders)."),
+                 "flag per AHP-eligible seller (>= 5 items sold)."),
     CatalogEntry("seller_recommendations", "csv", "Batch expert-system output: action, fired "
                  "rule and rationale per seller."),
     CatalogEntry("sentiment_agent_summary", "csv", "Per-agent aggregates of the synthetic "

@@ -24,6 +24,11 @@ MISSING_FILE_HELP = (
     "outputs, then reload this page."
 )
 TECHNICAL_LABEL = "Technical details"
+# Shown in Technical details wherever a seller-level count appears.
+ITEMS_SOLD_NOTE = (
+    "Items sold counts order lines: an order with three products is three items, while "
+    "delivered orders counts each order once."
+)
 SYNTHETIC_TAG = "Synthetic data"
 
 _CSS = f"""

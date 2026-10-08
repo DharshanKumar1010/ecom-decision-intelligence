@@ -48,6 +48,14 @@
 # against RandomForest's real distribution: R01 -> 0.178 (75th pct), R03 ->
 # 0.29 (90th pct), R06/R10 -> 0.106 (median). Priorities are untouched --
 # only the calibration point moved, not each rule's relative severity.
+# ahp_score recalibration (Stage 5, empirical-Bayes shrinkage adopted in src/ahp.py, first at
+# item level, then at order level): the shrunk quality score is compressed toward the middle,
+# so the old ahp_score cutoffs moved to the wrong percentiles. Both rules were
+# percentile-intent (R06: 90th percentile, R11: 10th percentile, over all sellers that have
+# an ahp_score), so they were re-derived at the SAME percentiles each time: R06 0.789 ->
+# 0.7308 (item level) -> 0.711 (order level, 90th); R11 0.604 -> 0.546 (item level) -> 0.549
+# (order level, 10th). Late-risk thresholds were deliberately left alone in these passes.
+# See docs/knowledge_engineering.md section 8.
 # R02/R05/R11 reference late_rate (the EMPIRICAL is_late rate), not
 # avg_late_risk (the PREDICTED risk) -- late_rate never depended on which
 # model produces predictions, so their thresholds were checked and
@@ -73,7 +81,7 @@
 - id: R06
   priority: 90
   if:
-    - {fact: ahp_score, op: ">=", value: 0.789}
+    - {fact: ahp_score, op: ">=", value: 0.711}
     - {fact: avg_late_risk, op: "<", value: 0.106}
   then: Feature
   because: "AHP composite score in the top 10% of established sellers, with predicted late-delivery risk at or below the median (recalibrated to RandomForest's real median) — a proven, low-risk top performer worth featuring."
@@ -137,7 +145,7 @@
 - id: R11
   priority: 48
   if:
-    - {fact: ahp_score, op: ">=", value: 0.604}
+    - {fact: ahp_score, op: ">=", value: 0.549}
     - {fact: late_rate, op: "<=", value: 0.10}
   then: Keep
   because: "AHP score above the bottom decile of established sellers and an actual late-delivery rate at or below the 75th percentile — a solidly average-or-better seller."

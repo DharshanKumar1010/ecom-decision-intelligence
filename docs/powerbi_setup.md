@@ -26,6 +26,14 @@ table if the pipeline is rerun on different data.
 
 **Total: 10 tables, 361,860 rows exported.**
 
+`AhpRanking` carries two versions of the review and on-time criteria: `avg_review_score` and
+`on_time_rate` are the **shrunk** values used for scoring (pulled toward the marketplace mean,
+`docs/knowledge_engineering.md` section 8), while `avg_review_raw` and `on_time_rate_raw` are
+the raw averages, both computed per distinct order (one review per order); use the raw
+columns for any visual labelled "average review" or "on-time rate". `n_reviewed` is the number
+of distinct reviewed orders and `n_orders` the number of distinct delivered orders (the n used
+for shrinkage); `order_volume` counts items sold (order lines), not distinct orders.
+
 ## Import steps (SSMS, manual)
 
 1. Open SSMS, connect to the local SQL Server Express instance.

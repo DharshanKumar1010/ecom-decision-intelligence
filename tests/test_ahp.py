@@ -47,6 +47,7 @@ def test_build_seller_criteria_aggregation_and_min_orders_filter() -> None:
     fact = pd.DataFrame(
         {
             "item_key": ["i1", "i2", "i3", "i4", "i5"],
+            "order_id": ["o1", "o2", "o3", "o4", "o5"],
             "seller_id": ["S1", "S1", "S1", "S2", "S2"],
             "review_score": [5.0, 4.0, 3.0, 5.0, 5.0],
             "is_late": [0, 0, 1, 0, 0],
@@ -55,7 +56,7 @@ def test_build_seller_criteria_aggregation_and_min_orders_filter() -> None:
     )
     dim_seller = pd.DataFrame({"seller_id": ["S1", "S2"], "seller_state": ["SP", "RJ"]})
 
-    criteria = build_seller_criteria(fact, dim_seller, min_orders=3)
+    criteria = build_seller_criteria(fact, dim_seller, min_orders=3, shrink=False)
     assert set(criteria["seller_id"]) == {"S1"}  # S2 has only 2 orders, below min_orders=3
 
     row = criteria.loc[criteria["seller_id"] == "S1"].iloc[0]

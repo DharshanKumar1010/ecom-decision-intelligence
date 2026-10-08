@@ -18,6 +18,7 @@ import streamlit as st
 from app import _theme as theme
 from app._common import load_knowledge_base, load_parquet, load_report_csv
 from app._components import (
+    ITEMS_SOLD_NOTE,
     footer,
     kpis,
     note,
@@ -95,7 +96,7 @@ def _selector(facts: pd.DataFrame, recommendations: pd.DataFrame) -> str:
         chosen = st.selectbox(
             f"Seller (all {len(seller_ids):,}; type to search)",
             seller_ids,
-            format_func=lambda sid: f"{short_id(sid)} · {int(orders[sid])} orders",
+            format_func=lambda sid: f"{short_id(sid)} · {int(orders[sid])} items sold",
             key=_SELLER_KEY,
         )
     with right:
@@ -125,14 +126,14 @@ def _result_block(result: InferenceResult) -> None:
 
 def _confidence_line(quadrant_row: pd.DataFrame) -> None:
     if quadrant_row.empty:
-        note(f"Fewer than {config.DISCOVERY_MIN_ORDERS} orders: no quality score and no group, "
+        note(f"Fewer than {config.DISCOVERY_MIN_ORDERS} items sold: no quality score and no group, "
              "so quality-based rules cannot apply to this seller.")
         return
     quadrant = quadrant_row.iloc[0]
     if quadrant["confidence"] == "low":
-        note(f"Low confidence: this seller has {int(quadrant['order_volume'])} orders (under "
+        note(f"Low confidence: this seller has {int(quadrant['order_volume'])} items sold (under "
              f"{config.DISCOVERY_CONFIDENCE_MIN_ORDERS}) and sits in the {quadrant['quadrant']} "
-             "group. Quality signals from so few orders are promising, not proof: treat any "
+             "group. Quality signals from so few items are promising, not proof: treat any "
              "Promote or Feature outcome as directional.")
 
 
@@ -198,9 +199,10 @@ def _technical(result: InferenceResult, kb: KnowledgeBase, row: pd.Series,
         f"- Predicted late risk: {row['avg_late_risk']:.3f} (a pipeline output, not a "
         "held-out measurement: the model has seen most of these items while learning)\n"
         f"- Quality (AHP) score: {quality} (needs at least {config.DISCOVERY_MIN_ORDERS} "
-        "orders)\n"
+        "items sold)\n"
         f"- Hidden Gem: {'yes' if bool(row['is_hidden_gem']) else 'no'}"
     )
+    note(ITEMS_SOLD_NOTE)
     st.markdown("**Rule engine explanation**")
     st.code(ExplanationFacility.explain(result), language="text")
     st.text_input("Search by full seller id", key=_LOOKUP_KEY, on_change=_lookup)
@@ -234,7 +236,7 @@ def render() -> None:
     _result_block(result)
     review = "n/a" if pd.isna(row["avg_review"]) else f"{row['avg_review']:.2f}"
     kpis([
-        ("Orders", f"{int(row['order_volume'])}", None),
+        ("Items sold", f"{int(row['order_volume'])}", None),
         ("Average review", review, "Average review score (1 to 5)."),
         ("Late-delivery rate", f"{row['late_rate'] * 100:.1f}%",
          "Share of this seller's items that really were delivered late."),

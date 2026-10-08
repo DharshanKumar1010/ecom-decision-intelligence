@@ -338,3 +338,74 @@ Technical details heatmap with its caveat, and the chart still shows five bars. 
 Implementation drops the separate "Why" sentence; the subtitle and the ticked conditions
 carry the reason. (c) `.streamlit/config.toml` sets `client.toolbarMode = "minimal"`
 (supported by the installed Streamlit 1.64).
+
+## Stage 5 — empirical-Bayes shrinkage adopted in the AHP quality score (not committed)
+
+**Why.** Stage 4d showed that inside the Hidden Gem quadrant items sold and AHP score
+correlated at -0.19: small sellers with a few perfect reviews were over-ranked (54 of 478
+gems averaged exactly 5.0). Shrinkage was adopted as an explicit, separately tested change
+to the model, not a presentation tweak. It was built twice, and the history matters:
+
+1. *Item-level version (superseded).* n counted items, k = 11 (review) and 14 (on-time),
+   and `n_reviewed` counted reviewed items. Reviews and lateness belong to an ORDER and repeat
+   on every item of it, so counting items overstated the evidence behind a seller.
+2. *Order-level version (current).* n counts distinct orders per seller: `n_reviewed` =
+   distinct reviewed orders, `n_orders` = distinct delivered orders; the raw columns
+   `avg_review_raw` / `on_time_rate_raw` are per order (one review per order, an order is late
+   if delivered late). Eligibility is unchanged and still defined by items sold (>= 5 for
+   Discovery, >= 30 for Choice). Verified: in all 97,811 (seller, order) pairs the items agree
+   on review and lateness.
+
+**What changed.**
+- `src/ahp.py`: `seller_order_table`, `estimate_prior_strengths` (order level, with the
+  intermediate variances), `select_prior_strength` (rounded estimate if inside the tested 5 to
+  30 range, else 10), `shrink_toward_mean` (`(n*x + k*mean)/(n + k)`), and
+  `build_seller_criteria(..., shrink=True)`, the one shared scoring path for Choice and
+  Discovery. Price, items sold, `compute_weights` and the pairwise matrix are untouched;
+  `python -m src.ahp` also writes `reports/ahp_prior_strength.csv`. `src/discovery.py`
+  needed no change.
+- `src/config.py`: `AHP_SHRINKAGE_K_REVIEW = 18`, `AHP_SHRINKAGE_K_ON_TIME = 26`, range
+  (5, 30), fallback 10. A test checks them against the order-level estimate from the data.
+- `rules/seller_rules.yaml`: only the two rules that read `ahp_score`, both percentile
+  intent, re-derived at the same percentile of the new distribution: R06 0.789 to 0.711
+  (90th), R11 0.604 to 0.549 (10th). Late-risk thresholds untouched (to be recalibrated
+  separately).
+- Wording: seller-level counts are "items sold" in the UI, docs and `src/explain.py`
+  strings ("Delivered orders" keeps its name on Intelligence); Discovery tiers are shown as
+  "Stronger evidence (15+ items sold)" and "Early signal (under 15 items sold)"; a sentence in
+  Technical details and the demo script explains items sold versus delivered orders.
+  `explain._fmt` shows thresholds to 4 decimals. `scripts/diagnostic_shrinkage.py` now builds
+  its own frozen item-level criteria so its historical report is reproducible (byte-identical).
+
+**Real numbers (order level).** k estimates on the pool of 1,864 sellers with >= 5 items sold:
+review within variance 1.6332, observed 0.23422, noise 0.14256, between 0.09165, k = 17.82
+(used 18); on-time within 0.07376, observed 0.009380, noise 0.006534, between 0.002847,
+k = 25.91 (used 26). The expected "about 22 and 28" came from an earlier sensitivity on
+sellers with >= 5 distinct orders (1,766 sellers: 21.6 and 27.8); on the stated items-sold
+pool the estimates are lower. Choice-pool sensitivity (>= 30 items, 681 sellers): 25.65 and
+41.82 (the on-time value is outside the range, so it would fall back to 10); one k per
+criterion is used for both pages.
+
+Three-way comparison (no shrinkage, item level, order level): Hidden Gems 478 / 450 / 437;
+Star 454 / 482 / 495; Overrated 480 / 452 / 439; Overlooked-Low-Quality 452 / 480 / 493;
+gems vs no shrinkage: item level 450 stay, 28 leave, 0 enter; order level 420 stay, 58
+leave, 17 enter. Normal-confidence gems in the top 10: 1 / 4 / 4. Top-10 gems with a raw 5.0
+average: 10 / 6 / 1. Spearman of items sold vs score inside the gem quadrant: -0.19 / +0.17 /
++0.23. Choice top-10 overlap with the no-shrinkage ranking: 7 (item) and 5 (order) of 10.
+Actions Keep / Promote / Feature / Warn / Suspend: 1,970 / 330 / 233 / 270 / 167, then
+1,946 / 397 / 190 / 270 / 167, then 1,949 / 412 / 173 / 269 / 167 (256 sellers changed
+action no-shrinkage to order level). Full per-rule tables: `docs/knowledge_engineering.md`
+section 8.
+
+**Honest limits.** Shrinkage compresses scores, so the median quality line that defines the
+quadrants fell (0.716 to 0.644); the 17 sellers that entered the gem quadrant all came from
+Overlooked-Low-Quality and average only 3.81 raw review with few late deliveries. The
+order-level `avg_review_raw` differs from `SellerFacts.avg_review` (item-level, used by the
+rules and the Implementation page; mean gap 0.058, 749 sellers differ by more than 0.05),
+because `src/discovery.py` and the rules were out of scope. The k estimate depends on the
+pool, and a single k is a compromise between small and large sellers.
+
+**Environment.** scikit-learn is still blocked by Application Control, so only `src.ahp`,
+`src.discovery`, `src.expert` and `src.export_sql` were re-run, individually; `src.predict`
+and `run_all.py` were not run. `LatePredictions`, the models and the model reports are
+byte-identical.

@@ -80,9 +80,9 @@ def test_promote_fires_via_r08_for_moderate_low_risk_hidden_gem(engine: Inferenc
 
 def test_promote_fires_via_r09_for_very_low_risk_hidden_gem(engine: InferenceEngine) -> None:
     facts = WorkingMemory(
-        # ahp_score kept below R06's 0.789 Feature threshold so this fixture
+        # ahp_score kept below R06's 0.711 Feature threshold so this fixture
         # isolates the Promote tier rather than accidentally matching Feature.
-        seller_id="best_gem", ahp_score=0.75, avg_late_risk=0.02, avg_review=4.8,
+        seller_id="best_gem", ahp_score=0.68, avg_late_risk=0.02, avg_review=4.8,
         order_volume=6, late_rate=0.0, is_hidden_gem=True,
     ).as_facts()
     result = engine.run(facts)

@@ -56,7 +56,7 @@ _FACT_LABELS: dict[str, str] = {
     "ahp_score": "AHP quality score",
     "avg_late_risk": "predicted late risk",
     "avg_review": "average review score",
-    "order_volume": "number of orders",
+    "order_volume": "number of items sold",
     "late_rate": "actual late-delivery rate",
     "is_hidden_gem": "Hidden Gem status",
 }
@@ -93,10 +93,10 @@ def _humanise(name: str) -> str:
 
 
 def _fmt(value: float) -> str:
-    """Compact number: integers without decimals, otherwise up to 3 decimals."""
+    """Compact number: integers without decimals, otherwise up to 4 decimals."""
     if float(value).is_integer():
         return f"{int(value):,}"
-    return f"{value:.3f}".rstrip("0").rstrip(".")
+    return f"{value:.4f}".rstrip("0").rstrip(".")
 
 
 def _is_missing(value: Any) -> bool:
@@ -218,11 +218,11 @@ def quadrant_definitions(quality_line: float, popularity_line: float) -> dict[st
     """One-line definition of each quadrant using the live split lines."""
     q, p = f"{quality_line:.3f}", f"{popularity_line:,.0f}"
     return {
-        "Star": f"quality score at least {q} and at least {p} orders: good and well known",
-        "Hidden Gem": f"quality score at least {q} but under {p} orders: good but overlooked",
-        "Overrated": f"at least {p} orders but quality score under {q}: popular, not good",
+        "Star": f"quality score at least {q} and at least {p} items sold: good and well known",
+        "Hidden Gem": f"quality score at least {q} but under {p} items sold: good but overlooked",
+        "Overrated": f"at least {p} items sold but quality score under {q}: popular, not good",
         "Overlooked-Low-Quality": (
-            f"under {p} orders and quality score under {q}: neither good nor popular"
+            f"under {p} items sold and quality score under {q}: neither good nor popular"
         ),
     }
 
@@ -407,8 +407,9 @@ def design_answer(auc: float, base_rate: float) -> str:
 def choice_answer(n_sellers: int, min_orders: int) -> str:
     """Headline for the Choice page."""
     return (
-        f"{n_sellers:,} established sellers (each with at least {min_orders} orders) are ranked "
-        "on reviews, on-time delivery, price and volume; you can change how much each matters."
+        f"{n_sellers:,} established sellers (each with at least {min_orders} items sold) are "
+        "ranked on reviews, on-time delivery, price and items sold; you can change how much "
+        "each matters."
     )
 
 
@@ -416,7 +417,7 @@ def discovery_answer(n_gems: int, n_low_confidence: int, min_orders: int) -> str
     """Headline for the Discovery page."""
     return (
         f"{n_gems:,} sellers look good but are overlooked; {n_low_confidence:,} of them have "
-        f"fewer than {min_orders} orders, so treat those as leads, not proof."
+        f"fewer than {min_orders} items sold, so treat those as leads, not proof."
     )
 
 

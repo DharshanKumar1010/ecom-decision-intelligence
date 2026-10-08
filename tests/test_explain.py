@@ -129,7 +129,7 @@ def test_funnel_sentence_handles_an_empty_funnel() -> None:
 def test_quadrant_sentences_use_the_live_lines_and_counts() -> None:
     definitions = quadrant_definitions(0.716, 18.0)
     assert set(definitions) == {"Star", "Hidden Gem", "Overrated", "Overlooked-Low-Quality"}
-    assert "0.716" in definitions["Hidden Gem"] and "18 orders" in definitions["Hidden Gem"]
+    assert "0.716" in definitions["Hidden Gem"] and "18 items sold" in definitions["Hidden Gem"]
     assert "0.9" in quadrant_definitions(0.9, 18.0)["Star"]
     sentence = quadrant_sentence("Hidden Gem", 1478, definitions["Hidden Gem"])
     assert sentence.startswith("1,478 sellers are in the Hidden Gem group")
@@ -256,9 +256,9 @@ def test_page_answers_contain_the_live_values_passed_in() -> None:
     assert "8.5%" in intelligence_answer(funnel, 0.0851)
     assert "78%" in design_answer(0.7841, 0.0791) and "7.9%" in design_answer(0.7841, 0.0791)
     choice = choice_answer(681, 30)
-    assert "681 established" in choice and "at least 30 orders" in choice
+    assert "681 established" in choice and "at least 30 items sold" in choice
     answer = discovery_answer(478, 400, 15)
-    assert "478" in answer and "400" in answer and "fewer than 15 orders" in answer
+    assert "478" in answer and "400" in answer and "fewer than 15 items sold" in answer
     architecture = architecture_answer(16, 12)
     assert "16 data tables" in architecture and "12 rules" in architecture
 

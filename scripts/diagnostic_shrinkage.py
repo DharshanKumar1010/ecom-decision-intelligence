@@ -37,7 +37,6 @@ from scipy.stats import spearmanr
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.ahp import (  # noqa: E402
-    build_seller_criteria,
     compute_weights,
     normalize_criteria,
     score_sellers,
@@ -55,6 +54,25 @@ from src.discovery import compute_quadrants  # noqa: E402
 
 K_VALUES = (5, 10, 15, 30)
 TOP_N = 10
+
+
+def item_level_criteria(
+    fact: pd.DataFrame, dim_seller: pd.DataFrame, min_orders: int
+) -> pd.DataFrame:
+    """The raw ITEM-level criteria this diagnostic was written against (frozen on purpose).
+
+    `src.ahp.build_seller_criteria` now works at order level; this historical diagnostic keeps
+    its original item-level definition so its report stays reproducible.
+    """
+    grouped = fact.groupby("seller_id").agg(
+        avg_review_score=("review_score", "mean"),
+        on_time_rate=("is_late", lambda s: 1.0 - s.mean()),
+        avg_price=("price", "mean"),
+        order_volume=("item_key", "count"),
+        n_reviewed=("review_score", "count"),
+    ).reset_index()
+    grouped = grouped.merge(dim_seller[["seller_id", "seller_state"]], on="seller_id", how="left")
+    return grouped[grouped["order_volume"] >= min_orders].reset_index(drop=True)
 
 
 def _score(criteria: pd.DataFrame) -> pd.DataFrame:
@@ -89,8 +107,7 @@ def _top_normal(gems: pd.DataFrame) -> int:
 
 def shrunk_criteria(criteria: pd.DataFrame, fact: pd.DataFrame, k: int) -> pd.DataFrame:
     """Criteria with average review and on-time rate shrunk toward the global mean."""
-    reviewed = fact.groupby("seller_id")["review_score"].count().rename("n_reviewed")
-    out = criteria.merge(reviewed, on="seller_id", how="left")
+    out = criteria.copy()
     global_review = float(fact["review_score"].mean())
     global_on_time = 1.0 - float(fact["is_late"].mean())
     n_rev = out["n_reviewed"].fillna(0)
@@ -99,7 +116,7 @@ def shrunk_criteria(criteria: pd.DataFrame, fact: pd.DataFrame, k: int) -> pd.Da
     ) / (n_rev + k)
     n_ord = out["order_volume"]
     out["on_time_rate"] = (n_ord * out["on_time_rate"] + k * global_on_time) / (n_ord + k)
-    return out.drop(columns="n_reviewed")
+    return out
 
 
 def _active_months(fact: pd.DataFrame) -> pd.Series:
@@ -112,7 +129,7 @@ def build_report() -> str:
     """Run both experiments and return the report text."""
     fact = pd.read_parquet(PROCESSED_DATA_DIR / "FactOrderItems.parquet")
     dim_seller = pd.read_parquet(PROCESSED_DATA_DIR / "DimSeller.parquet")
-    criteria = build_seller_criteria(fact, dim_seller, min_orders=DISCOVERY_MIN_ORDERS)
+    criteria = item_level_criteria(fact, dim_seller, DISCOVERY_MIN_ORDERS)
     base_scored = _score(criteria)
     base = _quadrants(base_scored)
     base_gems = _gems(base)

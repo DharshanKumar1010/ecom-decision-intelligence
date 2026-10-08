@@ -63,8 +63,9 @@ clear roughly the eligible population's own midpoint.
 both `None` by default, meaning `compute_quadrants` splits each axis at its
 own median among AHP-eligible sellers — the simplest split that guarantees
 roughly balanced quadrants without hand-picking a magic number for either
-axis. On the last real run this produced: **Star 454, Hidden Gem 478,
-Overrated 480, Overlooked-Low-Quality 452** — a near-even four-way split,
+axis. At Stage 4 this produced Star 454, Hidden Gem 478, Overrated 480,
+Overlooked-Low-Quality 452. **Current numbers (Stage 5, after the order-level empirical-Bayes shrinkage of
+section 8): Star 495, Hidden Gem 437, Overrated 439, Overlooked-Low-Quality 493** — a near-even four-way split,
 confirming the median default doesn't collapse the classification onto one
 dominant label.
 
@@ -274,19 +275,20 @@ All checked against the same `SellerFacts.parquet` run (2,970 sellers;
 `late_rate` percentiles: 50th 0.0, 75th 0.10, 90th 0.222, 95th 0.337;
 `ahp_score` percentiles as in section 1's established-seller pool extended
 to the 5-order-eligible pool: 10th 0.604, 25th 0.669, 50th 0.716, 75th
-0.755, 90th 0.789).
+0.755, 90th 0.789 at Stage 3.5; after the Stage 5 order-level shrinkage they are 0.549, 0.601,
+0.644, 0.681 and 0.711, see section 8).
 
 | Rule | Threshold | Justification | Real matches |
 |---|---|---|---|
 | R01 Suspend | `avg_late_risk > 0.53` (~75th pct) AND `avg_review < 3.5` (between 10th/25th pct) | Combines a top-quartile risk signal with a clearly-below-average review score — CLAUDE.md's own example rule, re-thresholded to this data's real percentiles instead of its illustrative 0.6/3.0. | 94 sellers |
 | R02 Suspend | `late_rate > 0.4` AND `order_volume >= 10` | An empirical (not predicted) late rate above 40% is a severe, directly-observed failure; requiring >=10 orders rules out a fluke from 1-2 late shipments. | 7 sellers |
-| R06 Feature | `ahp_score >= 0.789` (90th pct) AND `avg_late_risk < 0.503` (median) | Top-decile AHP quality with at-or-below-median predicted risk — a proven, low-risk top performer. | 107 sellers |
+| R06 Feature | `ahp_score >= 0.711` (90th pct; was 0.789 before the Stage 5 shrinkage, section 8) AND `avg_late_risk < 0.503` (median) | Top-decile AHP quality with at-or-below-median predicted risk — a proven, low-risk top performer. | 107 sellers |
 | R07 Feature | `avg_review >= 4.3` AND `order_volume >= 83` (90th pct) | High-volume sellers (90th percentile+) have a *lower* mean review (4.08) than the overall population (4.27 median) in this data, so requiring 4.3 specifically picks out sellers sustaining quality at scale rather than everyone at that volume. | 69 sellers |
 | R03 Warn | `avg_late_risk > 0.55` (~90th pct) | A single, wide risk-only caution signal, deliberately set higher than R01's combined-condition threshold since it fires alone. | 226 sellers |
 | R04 Warn | `avg_review < 3.5` AND `order_volume >= 5` | Same review cutoff as R01 (10th-25th pct band) without the risk condition, gated on order_volume >= 5 so it reflects a pattern, not one bad review. | 177 sellers |
 | R05 Warn | `late_rate > 0.25` (90th pct) AND `order_volume >= 5` | A softer, single-condition version of R02's empirical-lateness signal. | 105 sellers |
 | R10 Keep | `avg_late_risk <= 0.503` AND `avg_review >= 4.27` (both median) AND `order_volume >= 5` | At-or-better-than-median on both risk and reviews, with a real order history — no signal to act on. | 446 sellers |
-| R11 Keep | `ahp_score >= 0.604` (10th pct) AND `late_rate <= 0.10` (75th pct) | Excludes only the bottom decile of AHP quality and the worst quartile of empirical lateness — a wide "no red flags" net. | 1,264 sellers |
+| R11 Keep | `ahp_score >= 0.549` (10th pct; was 0.604 before the Stage 5 shrinkage, section 8) AND `late_rate <= 0.10` (75th pct) | Excludes only the bottom decile of AHP quality and the worst quartile of empirical lateness — a wide "no red flags" net. | 1,264 sellers |
 | R12 (default) | none (`if: []`) | Every seller must get a recommendation (CLAUDE.md section 7.5); catches sellers with too little data to trigger any of the above (frequently order_volume < 5, so no `ahp_score`). | 1,228 sellers (41.4% of all sellers) |
 
 **Priority ladder** (rationale for the ordering, not just the numbers):
@@ -310,3 +312,161 @@ persisted ground-truth sentiment label to tune against (see
 `src.synthetic`'s docstring and `src.sentiment`'s module docstring), so
 using the library's validated defaults rather than an untuned guess is the
 honest choice here.
+
+## 8. Empirical-Bayes shrinkage of the AHP quality score (Stage 5, order level)
+
+**Why.** Inside the Hidden Gem quadrant, items sold and AHP score correlated at -0.19
+(Spearman): the more a seller sold, the *lower* it scored, because a handful of perfect
+reviews or on-time deliveries gives a small seller an extreme raw average. The two rate-like
+criteria (average review, on-time rate) are therefore pulled toward the marketplace mean
+before scoring: `shrunk = (n * seller_value + k * marketplace_mean) / (n + k)`, i.e. weight
+`n / (n + k)` on the seller's own record. Price and items sold are unchanged;
+`compute_weights` and the pairwise matrix are untouched.
+
+**The unit of evidence is the order, not the item.** A review belongs to an order and so does
+lateness, so every item of an order repeats the same review and the same late flag.
+Verified on the real data: the 110,189 items form 97,811 (seller, order) pairs (96,470
+distinct orders; 1,275 orders span two or more sellers and count once for each); in none of
+the 97,811 pairs do the items disagree on review or lateness; 8.9% of pairs contain more
+than one item. Counting items therefore overstates how much independent evidence a seller
+has. The first version of this stage (item level, k = 11 and 14) did exactly that, and its
+`n_reviewed` counted reviewed *items*; it is superseded. Now:
+- `n_reviewed` = distinct reviewed orders per seller (used as n for the review);
+  `n_orders` = distinct delivered orders per seller (used as n for the on-time rate);
+- `avg_review_raw` = mean of one review per order, `on_time_rate_raw` = 1 minus the share of
+  late orders (raw, unshrunk, kept as their own columns in `ahp_ranking.csv`);
+- eligibility is unchanged and still defined by **items sold**: >= 5 for the Discovery pool,
+  >= 30 for Choice, so the pools and the quadrant rules keep their definition.
+
+`SellerFacts.avg_review` (used by R01/R04/R07/R10 and the Implementation page) is still the
+item-level raw mean, because `src/discovery.py` and the rules were out of scope. Across all
+sellers it differs from the order-level `avg_review_raw` by 0.058 on average (749 sellers
+differ by more than 0.05; the largest gaps are tiny sellers), so the Choice table's "Avg
+review" is per reviewed order while an Implementation fact card is per item.
+
+**How k is chosen: method-of-moments empirical Bayes, from the data.** For a criterion with
+within-seller variance `s2` (spread of one order's value around its seller's own true value)
+and between-seller variance `t2` (spread of the sellers' TRUE values), `k = s2 / t2`. The
+observed variance of seller averages is `t2` plus sampling noise, so
+`t2 = observed variance - mean(s2 / n)`. For reviews `s2` is the pooled order-level variance
+of review scores (weighted by n - 1); for on-time rate it is the binomial `p(1 - p)` at the
+marketplace on-time rate. Pool: the 1,864 sellers with at least `DISCOVERY_MIN_ORDERS = 5`
+items sold. Real values (`reports/ahp_prior_strength.csv`, written by `python -m src.ahp`):
+
+| Criterion | Sellers | Within variance | Observed variance | Sampling noise | Between variance | k estimate | k used |
+|---|---|---|---|---|---|---|---|
+| Average review (one review per order) | 1,860 | 1.6332 | 0.23422 | 0.14256 | 0.09165 | 17.82 | **18** |
+| On-time rate (orders; p = 0.9198) | 1,864 | 0.07376 | 0.009380 | 0.006534 | 0.002847 | 25.91 | **26** |
+
+(4 pool sellers have fewer than two reviewed orders and cannot inform the review variance.)
+Rule: use the rounded estimate if it lies inside the 5 to 30 range tested in
+`scripts/diagnostic_shrinkage.py`, otherwise `k = 10`. Both estimates are inside the range,
+so `config.AHP_SHRINKAGE_K_REVIEW = 18` and `AHP_SHRINKAGE_K_ON_TIME = 26`. A test fails if
+these constants stop matching the order-level estimate from the data.
+
+*A note on the expected "about 22 and 28".* Those figures came from an earlier sensitivity
+that restricted the pool to sellers with at least five distinct *orders* (1,766 sellers:
+21.6 and 27.8). The stated pool here is items sold >= 5, which includes sellers with 5 items
+in fewer orders; on that pool the estimates are 17.8 and 25.9.
+
+**Sensitivities (one k per criterion is used for both Choice and Discovery so the two pages
+share one definition of quality).**
+
+| Pool | Review k | On-time k |
+|---|---|---|
+| Items sold >= 5 (adopted, order level) | 17.82 | 25.91 |
+| Items sold >= 30, the Choice pool (681 sellers), order level | 25.65 | 41.82 |
+| All sellers with data, order level | 22.32 | 13.65 |
+| Items sold >= 5, item level (the superseded first version) | 10.63 | 14.42 |
+| Items sold >= 30, item level (superseded) | 19.85 | 32.34 |
+
+The Choice-pool on-time k (41.8) would be outside the 5 to 30 range and so, by the rule,
+fall back to 10; it is reported as a sensitivity only. Larger sellers are more consistent
+than small ones, so any single k is a compromise between the pools.
+
+**Effect (real runs): committed state (no shrinkage), item-level shrinkage, order-level
+shrinkage.**
+
+| Quantity | No shrinkage | Item level | Order level |
+|---|---|---|---|
+| Star | 454 | 482 | 495 |
+| Hidden Gem | 478 | 450 | 437 |
+| Overrated | 480 | 452 | 439 |
+| Overlooked-Low-Quality | 452 | 480 | 493 |
+| Gems that stay / leave / enter, vs no shrinkage | | 450 / 28 / 0 | 420 / 58 / 17 |
+| Gems normal / low confidence | 44 / 434 | 43 / 407 | 44 / 393 |
+| Normal-confidence gems among the top 10 gems | 1 | 4 | 4 |
+| Top 10 gems with a raw 5.0 average | 10 | 6 | 1 |
+| Gems with a raw 5.0 average (all) | 54 | 53 | 50 |
+| Spearman, items sold vs score inside the gem quadrant | -0.19 | +0.17 | +0.23 |
+| Choice top 10: overlap with no-shrinkage ranking | | 7 of 10 | 5 of 10 |
+| Keep / Promote / Feature / Warn / Suspend | 1,970 / 330 / 233 / 270 / 167 | 1,946 / 397 / 190 / 270 / 167 | 1,949 / 412 / 173 / 269 / 167 |
+
+Choice top 10, order level (previous rank without shrinkage): 1, 2, 15, 8, 36, 26, 4, 10, 16, 68
+(item level: 1, 2, 4, 3, 10, 8, 5, 15, 12, 16). The 4-in-10 normal-confidence result is
+unchanged from the item-level version, but the perfect-average artefact is nearly gone from
+the top of the gem list (1 of 10 instead of 6). Low/normal confidence for the whole pool is
+unchanged (818 / 1,046) because it depends only on raw items sold.
+
+**A side effect to know about.** Shrinkage compresses scores toward the middle, so the median
+quality line that defines the quadrants fell from 0.716 to 0.644. Of the 17 sellers that
+entered the Hidden Gem quadrant, all came from Overlooked-Low-Quality, and they are not
+stars: they average 3.81 raw review (the marketplace is 4.13) with almost no late
+deliveries (2.2%); they clear the lowered median on delivery record. The 58 that left were
+mostly small sellers with very high raw reviews (4.51 mean).
+
+`ahp_score` percentiles over the 1,864 scored sellers (`SellerFacts`):
+
+| Percentile | No shrinkage | Item level | Order level |
+|---|---|---|---|
+| 10th | 0.6036 | 0.5457 | 0.5491 |
+| 25th | 0.6692 | 0.6088 | 0.6006 |
+| 50th | 0.7157 | 0.6608 | 0.6443 |
+| 75th | 0.7554 | 0.7019 | 0.6814 |
+| 90th | 0.7892 | 0.7308 | 0.7110 |
+
+**Rules reading `ahp_score` (the only rules recalibrated in this stage).** Re-derived at the
+same percentile each time, intent taken from each rule's own justification (section 6):
+
+| Rule | Condition on `ahp_score` | Intent | Original | Item level | Order level | Real percentile of order-level threshold |
+|---|---|---|---|---|---|---|
+| R06 Feature | `>=` | **Percentile** (90th, top decile) | 0.789 | 0.7308 | **0.711** | 90.0th (187 sellers at or above, 10.03%) |
+| R11 Keep | `>=` | **Percentile** (10th, "above the bottom decile") | 0.604 | 0.546 | **0.549** | 10.0th (186 sellers below, 9.98%) |
+
+Population: all sellers that have an `ahp_score` (1,864), the same convention as the original
+thresholds. Under the order-level distribution the previous cutoffs would have been the
+94.5th (0.7308) and 9.4th (0.546) percentiles, and the original ones the 99.9th (0.789) and
+26.2nd (0.604). No other rule reads `ahp_score`. R02 is a fixed level (40% late) and was not
+touched. The late-risk thresholds (R01, R03, R06, R10 on `avg_late_risk`; R08, R09) were
+deliberately left as they were and will be recalibrated separately.
+
+**R08/R09 against the new gem population (437 gems), late-risk thresholds unchanged.** R09
+(`avg_late_risk < 0.05`) matches 114 of 437 (26.1%); R08 (`< 0.3`) matches 433 of 437
+(99.1%). Before shrinkage: 119 of 478 (24.9%) and 472 of 478 (98.7%). Both are still strictly
+between 0% and 100%, so the drift test passes, and R09 still sits at about the 25th
+percentile of gem late risk (0.0492).
+
+**Recommendations fired per rule (all 2,970 sellers).**
+
+| Rule | No shrinkage | Item level | Order level |
+|---|---|---|---|
+| R01 Suspend | 165 | 165 | 165 |
+| R02 Suspend | 2 | 2 | 2 |
+| R03 Warn | 180 | 180 | 181 |
+| R04 Warn | 85 | 85 | 83 |
+| R05 Warn | 5 | 5 | 5 |
+| R06 Feature | 164 | 143 | 130 |
+| R07 Feature | 69 | 47 | 43 |
+| R08 Promote | 272 | 307 | 306 |
+| R09 Promote | 58 | 90 | 106 |
+| R10 Keep | 104 | 62 | 63 |
+| R11 Keep | 607 | 614 | 601 |
+| R12 Keep (default) | 1,259 | 1,270 | 1,285 |
+
+Transitions, no shrinkage to order level (256 sellers changed action): Feature to Promote 120,
+Keep to Feature 62, Promote to Keep 51, Keep to Promote 14, Feature to Keep 4, Promote to
+Feature 2, Warn to Promote 2, Promote to Warn 1; Suspend is unchanged and Warn changes only
+for those 3. As before, Feature to Promote is the main flow (tiny gems with perfect raw
+averages used to reach the old R06 cutoff and were featured ahead of Promote), Keep to
+Feature is shrinkage ranking steady high-volume sellers higher, and Promote to Keep is
+mostly sellers that left the gem quadrant (58 left).

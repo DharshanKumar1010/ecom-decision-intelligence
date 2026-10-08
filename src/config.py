@@ -178,6 +178,24 @@ AHP_RANDOM_INDEX: dict[int, float] = {
 
 AHP_CR_THRESHOLD: float = 0.10
 
+# Empirical-Bayes shrinkage of the two rate-like AHP criteria (src/ahp.py): a seller's
+# average review and on-time rate are pulled toward the marketplace mean with weight
+# k / (n + k), so a handful of perfect reviews cannot outrank a long, strong record.
+# n counts distinct ORDERS (a review and lateness belong to an order and repeat across its
+# items): reviewed orders for the review, delivered orders for the on-time rate.
+# k is the method-of-moments prior strength (within-seller variance / between-seller
+# variance of true values) at ORDER level, estimated by src.ahp.estimate_prior_strengths on
+# the pool of sellers with >= DISCOVERY_MIN_ORDERS items sold and rounded:
+# review 17.8 -> 18, on-time 25.9 -> 26.
+# Both estimates fall inside AHP_SHRINKAGE_K_RANGE (the range tested in
+# scripts/diagnostic_shrinkage.py); an estimate outside it would use the fallback instead.
+# Derivation, intermediate variances and sensitivities: docs/knowledge_engineering.md
+# section 8. A test fails if these constants stop matching the data-derived estimate.
+AHP_SHRINKAGE_K_REVIEW: int = 18
+AHP_SHRINKAGE_K_ON_TIME: int = 26
+AHP_SHRINKAGE_K_RANGE: tuple[int, int] = (5, 30)
+AHP_SHRINKAGE_K_FALLBACK: int = 10
+
 # --------------------------------------------------------------------------
 # Sentiment thresholds (src/sentiment.py, Stage 2)
 #

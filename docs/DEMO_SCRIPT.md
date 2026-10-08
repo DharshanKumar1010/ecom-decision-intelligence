@@ -6,9 +6,13 @@ single **Technical details** expander at the bottom for anyone who wants the tab
 matrices and rules. Open that expander only when a question needs it.
 
 **About the figures.** Every number below was checked against the repo's pipeline outputs on
-2026-10-08. The dashboard computes its values live from those files, so **if the dashboard
+2026-10-09. The dashboard computes its values live from those files, so **if the dashboard
 and this script ever disagree, the dashboard wins**; re-run `python run_all.py` and update
 this file.
+
+**Wording to use.** The pages say **items sold** for a seller's volume and **delivered
+orders** for the marketplace total. They differ because items sold counts order lines: an
+order with three products is three items sold but one delivered order.
 
 ---
 
@@ -48,20 +52,21 @@ Each page: what to click, then two sentences to say. Roughly 45 seconds each.
 
 *Click:* open **Technical details** and change one comparison box; the bars on the left move.
 
-> "Sellers with at least 30 orders are scored on reviews, on-time delivery, price and volume,
-> with weights from comparing the criteria in pairs, and the sentence under the chart says
-> whether those judgments contradict each other. Make them contradict and it says the weights
-> should not be trusted."
+> "Sellers with at least 30 items sold are scored on reviews, on-time delivery, price and
+> items sold, with weights from comparing the criteria in pairs, and the sentence under the
+> chart says whether those judgments contradict each other. Make them contradict and it says
+> the weights should not be trusted. Reviews and on-time rate are first pulled toward the
+> marketplace average, so a few perfect reviews cannot beat a long, strong record."
 
 ### 4. Discovery: "Which good sellers are we overlooking?"
 
 *Click:* hover a hollow dot; point at the top-left **Hidden Gem** label; scroll to the two
 tables.
 
-> "Hidden gems are good sellers with few orders, so they are under-exposed; there are 478.
-> Only 44 have 15 or more orders and sit in the Actionable list; the other 434 are on the
-> Watchlist, shown hollow on the chart, because a few good reviews are promising but not
-> proof."
+> "Hidden gems are good sellers with few items sold, so they are under-exposed; there are
+> 437. Only 44 have 15 or more items sold and sit in the Stronger evidence list; the other 393
+> are an Early signal, shown hollow on the chart, because a few good reviews are promising
+> but not proof."
 
 ### 5. Implementation: "What should we do about this seller?"
 
@@ -102,14 +107,19 @@ half of its flags are right (precision 0.52), so it is a ranking aid, not an ora
 
 **4. Why are most hidden gems "low confidence"?**
 By definition a hidden gem has high quality but low popularity, and low popularity means few
-orders. 434 of the 478 hidden gems have fewer than 15 orders, just below the median of 18
-orders in the scored pool, so only gems with 15 to 17 orders (44 of them) can be normal
-confidence. A good average on a handful of orders could be luck: 54 of the 478 have a
-perfect 5.0 average, and inside the gem group more orders goes with a slightly *lower*
-score (Spearman -0.19). That is why the page lists the 44 Actionable gems first and puts
-the rest on a Watchlist rather than ranking everyone together. We also tested shrinking
-each seller's averages toward the marketplace average; it removes some of the luckiest
-small sellers but changes who counts as a gem, so it is a separate decision, not adopted.
+items sold. 393 of the 437 hidden gems have fewer than 15 items sold, just below the median
+of 18 in the scored pool, so only gems with 15 to 17 items sold (44 of them) can be normal
+confidence. A good average on a handful of orders could be luck, so we do two things. First,
+the quality score pulls each seller's average review and on-time rate toward the marketplace
+average by an amount measured from the data, counting distinct orders because a review
+belongs to an order, not to each item in it (empirical Bayes: a seller's record counts as
+much as the marketplace average after about 18 reviewed orders for reviews and 26 delivered
+orders for on-time rate). Before that, items sold and quality correlated at -0.19 inside the
+gem group (more sales, lower score), afterwards at +0.23; of the top 10 gems, 10 had a perfect
+5.0 average before and 1 does now. Second, the page still lists the 44 Stronger-evidence gems
+first and puts the rest under Early signal. One side effect: shrinkage lowers the quality
+median that splits the quadrants, so 17 sellers entered the gem group (mostly small sellers
+with few late deliveries but only about 3.8-star reviews) while 58 left.
 
 **5. Can I trust the late-risk score shown for a seller?**
 Treat it as a pipeline output, not a held-out measurement. The model was trained on roughly
@@ -127,12 +137,14 @@ seasonal rule.
 Yes, they are judgments, which is the nature of AHP; what AHP adds is a check that the
 judgments are consistent (consistency ratio 0.019, limit 0.10). The Choice page lets you
 change them and watch the ranking move, and the default weights are review score 47%,
-on-time rate 28%, order volume 17% and price 7%.
+on-time rate 28%, items sold 17% and price 7%.
 
 **8. Where do the expert-system thresholds come from?**
 Each threshold is either a fixed business limit or a percentile of the real data, and the
-percentile ones were recalibrated when the random forest replaced the first model, because
-its risk scores spread over a wider range. The rule-by-rule justification is in
+percentile ones were recalibrated when the random forest replaced the first model, and the
+quality-score ones again when the quality score began shrinking small sellers toward the
+average, because
+their distributions moved. The rule-by-rule justification is in
 `docs/knowledge_engineering.md`, and a test fails if the thresholds drift out of line again.
 
 **9. Does "healthier" or "good" mean anything about food or nutrition?**
@@ -146,7 +158,7 @@ page states openly. The forest also has a storage cost: the saved model is about
 
 **11. What are the main limits of this project?**
 The clickstream and call data are synthetic. The late-risk model ranks moderately well, not
-sharply. Hidden gems rest on few orders. The app is a decision aid on historical data from
+sharply. Hidden gems rest on few items sold. The app is a decision aid on historical data from
 one marketplace, and nothing here proves cause and effect. The speech analytics works from
 transcripts only, with no audio.
 
