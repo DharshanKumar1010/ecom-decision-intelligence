@@ -13,6 +13,7 @@ in place.
   and `mypy==1.13.0`, both verified working. If a new package hits this same
   block, pin to an older, long-established release rather than fighting the
   OS policy.
+- **Application Control now also blocks scikit-learn's compiled extensions (observed 2026-10-07).** After the OS build changed from 10.0.26200 to 10.0.26300 mid-project, `import sklearn` still works but `sklearn.metrics`, `sklearn.ensemble` etc. fail with `DLL load failed ... An Application Control policy has blocked this file` (a different `.pyd` each attempt: `_cython_blas`, `_radius_neighbors`, `_partition_nodes`). numpy, pandas, pyarrow, scipy and streamlit are unaffected. Effect: `tests/test_predict.py` cannot be collected and `python -m src.predict` cannot run on this machine until the policy is resolved. Nothing in `src/` was changed; the same tests passed earlier in the project. Not worked around (no policy bypass, no unrequested dependency change); needs a decision from the project owner.
 
 ## Stage 1 — data layer (reference)
 
@@ -187,3 +188,96 @@ rose (consistent with R08 now firing broadly). This is a real, meaningful
 shift in the expert system's real-world output driven purely by swapping
 which model produces `late_risk` — underscores why the diagnostic-then-CV
 evidence process mattered before making this change.
+
+## Stage 4 — Streamlit dashboard (built, awaiting review; not committed)
+
+`app/Home.py` plus six pages (`1_Intelligence` ... `6_DSS_Architecture`) and
+`app/_common.py` (cached loaders, page chrome, friendly missing-file handling,
+data catalog). UI only: pages call existing `src/` functions and read existing
+pipeline outputs; the 423 MB RandomForest is never loaded. 32 new tests in
+`tests/test_app.py` (smoke, content against the real files, missing-file per
+page). Friction worth knowing:
+
+- `st.page_link` raises `StreamlitPageNotFoundError` under `AppTest` (no page
+  registry). Kept real clickable links; fall back to a plain label on exactly
+  that exception (`_common.page_link_or_label`).
+- Each page puts the project root on `sys.path` before importing `src`/`app`,
+  which trips ruff E402; added a narrow `per-file-ignores` for `app/**` in
+  `pyproject.toml` rather than scattering `noqa`.
+- CLAUDE.md 7.7.3 (the Discovery caution caption) no longer exists as a
+  sub-section after later consolidation; the caption wording was restored from
+  the original spec, with the order threshold read from `config`, not hardcoded.
+- `config.DISCOVERY_*_THRESHOLD` are `None` (median default), so the scatter's
+  quadrant lines use the axis medians via `_common.quadrant_thresholds`, which is
+  tested for consistency against the stored quadrant labels.
+- A 4-class scatter fails the dataviz all-pairs floors with the default slot-4
+  colour; the quadrant palette (blue/orange/violet/aqua) was validated instead.
+  Aqua is 2.74:1 on white, so direct quadrant labels and a table view carry it.
+- Streamlit follows the system theme but chart colours were validated for the
+  light surface only; dark mode is not validated.
+
+## Stage 4b — plain-language dashboard, simplified (built, awaiting review; not committed)
+
+Goal: a non-technical viewer gets each page's point in about three seconds, while a
+technical examiner can still reach every number. UI and explanation layer only.
+
+**Current design.**
+- One template on every content page: the plain question as the title, one grey live
+  subtitle, at most four numbers, one main chart with a single caption, one
+  **Technical details** expander at the bottom (tables, matrices, sensitivity, tree text,
+  rules, near-miss, catalog), and a small grey footer (syllabus topic · analytics type ·
+  management level). Home is a title, a short description, the six pages and one note.
+- Light theme (`.streamlit/config.toml`), one accent colour plus greys, and one sans-serif
+  family for everything. Semantic colours exist only for the five actions and the four
+  seller groups, are muted, and are identical on every page. Synthetic data gets a small
+  grey "Synthetic data" tag beside its section title, nothing louder.
+- Files: `app/_theme.py` (tokens and the Plotly template), `app/_components.py` (template
+  helpers), `app/_common.py` (cached loaders, catalog, `model_review_flag`), `app/Home.py`
+  and `app/pages/1_Intelligence.py` ... `6_DSS_Architecture.py`, `.streamlit/config.toml`,
+  `docs/DEMO_SCRIPT.md`, and `src/explain.py` (pure, `mypy --strict`: plain-language
+  sentences and `near_miss`, which now only feeds the Technical details of Implementation).
+
+**What was tried, and why it was removed.** The first Stage 4 dashboard (above) was correct
+but read like an engineer's report. The first Stage 4b redesign answered that with a dark
+theme, a Plain English / Technical reading mode, a Presentation mode, a sidebar glossary
+with inline tooltips, a guided tour with step indicators, eyebrow labels, "ANSWER" bars,
+"how to read this chart" expanders, status pills, callout cards, tabs, a gauge and
+KPI cards. Review feedback was that it was too busy and confusing: every one of those
+added a second thing to learn before the data. It also rendered numbers and some sentences
+in a serif fallback, which looked inconsistent. All of it was removed rather than tuned:
+the content that Plain English mode showed was kept, and everything technical moved into
+the one expander. The dark palette was replaced by a light one re-validated for a white
+surface (the quadrant ring of Star, Hidden Gem, Overlooked-Low-Quality and Overrated; the
+violet/magenta pair that failed the normal-vision floor was swapped for violet/orange).
+Tests for the removed features (modes, glossary, tour navigation, header pills, callouts,
+gauge, dark-theme config, glyph uniqueness, Home pipeline-status warning) were removed
+with them; `tests/test_explain.py` was kept whole.
+
+**Guardrails, verified.** No existing `src/` file changed (`git diff --stat` empty for
+`src/`, `rules/`, `data/`, `reports/`, `models/`, requirements and task runners). A
+SHA-256 manifest of 71 files taken before the work and 72 after differs only by the new
+`src/explain.py`, and was re-checked after the simplification. No new dependency; no
+network at runtime (a test scans `app/` and `.streamlit/` for remote URLs; a test fails if
+any serif font name appears).
+
+**Honesty notes.**
+- `LatePredictions.parquet` is largely in-sample (models are fitted on ~80% of those
+  rows), so no lift or "catches X%" is derived from it; quality claims use only the
+  held-out `model_metrics.json` and the cross-validation report. The Implementation page
+  describes a seller's predicted risk as a pipeline output.
+- The "model under review" line is wired to an anchored `FLAG:`/`STATUS:` line naming the
+  token `REVIEW_TOKEN` in `app/_common.py`, in this file or under `reports/`. No such line
+  exists today, so nothing is shown; a test covers both the shown and absent cases.
+- The YAML `because` strings contain project jargon and `rules/` was out of scope, so the
+  plain-language reason is built from each rule's conditions and the seller's live values.
+- `near_miss` and `condition_checks` call the engine's own `Condition.evaluate`, not a
+  second copy of the operator logic. A test checks, for all 2,970 sellers and all 12
+  rules, that "this rule would fire" equals the real `InferenceEngine` match.
+- Supersedes the Stage 4 note about validating colours for the light surface only (the
+  light palette is now validated on white).
+
+**Gates.** `ruff check .`, `mypy src` (12 files) and `pytest --ignore=tests/test_predict.py`
+all pass (counts in the final report of the change); `test_predict.py` still cannot run
+here because scikit-learn is blocked by Application Control (see the environment notes).
+A headless boot returned HTTP 200 on the health endpoint and the server was stopped.
+Visual quality has not been checked in a browser.
