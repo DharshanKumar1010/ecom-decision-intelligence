@@ -1,0 +1,24 @@
+Diagnostic: shrinkage and rate-based popularity for the hidden-gem ranking
+==============================================================================
+
+AHP-eligible sellers (>= 5 orders): 1864. Current Hidden Gems: 478 (44 normal / 434 low confidence).
+Current top 10 gems by AHP score: 1 normal-confidence.
+
+Part 1: Bayesian shrinkage of average review and on-time rate (prior strength k)
+------------------------------------------------------------------------------
+   k  gems  stay  enter  top10 normal  rho all  rho gems  normal gems
+   5   464   464      0             2    0.988     0.950           43
+  10   450   450      0             4    0.968     0.899           43
+  15   441   441      0             4    0.951     0.864           43
+  30   429   428      1             5    0.917     0.800           43
+
+  stay/enter: gems that remain/join relative to the current 478; top10 normal: normal-confidence
+  sellers among the 10 highest-scoring gems; rho: Spearman correlation of the AHP score with
+  the current score (all eligible sellers / current gems only).
+
+Part 2: orders per active month as the popularity axis (current quality score)
+------------------------------------------------------------------------------
+Median orders/active month: 3.310 (median raw volume: 18); Spearman(volume, rate) = 0.640
+Gems under the rate measure: 444  stay: 327  enter: 117  leave: 151
+Normal-confidence gems: 137 of 444 (current: 44 of 478); top 10 normal-confidence: 0
+Order-count range of rate-based gems: 5 to 70 (current: 5 to 17)

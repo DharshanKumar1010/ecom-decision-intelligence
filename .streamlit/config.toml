@@ -8,6 +8,9 @@ borderColor = "#2A3340"
 font = "sans serif"
 baseRadius = "0.4rem"
 
+[client]
+toolbarMode = "minimal"
+
 [browser]
 gatherUsageStats = false
 

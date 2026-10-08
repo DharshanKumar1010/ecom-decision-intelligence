@@ -6,7 +6,15 @@ import pandas as pd
 import pytest
 
 from src.config import DISCOVERY_CONFIDENCE_MIN_ORDERS
-from src.discovery import build_seller_facts, compute_quadrants, confidence_flag, top_hidden_gems
+from src.discovery import (
+    TIER_ACTIONABLE,
+    TIER_WATCHLIST,
+    build_seller_facts,
+    compute_quadrants,
+    confidence_flag,
+    hidden_gem_tier,
+    top_hidden_gems,
+)
 
 
 def test_confidence_flag_boundary_14_vs_15_orders() -> None:
@@ -80,6 +88,56 @@ def test_top_hidden_gems_respects_n() -> None:
         }
     )
     assert len(top_hidden_gems(quadrant_df, n=3)) == 3
+
+
+def _gem_frame() -> pd.DataFrame:
+    n = DISCOVERY_CONFIDENCE_MIN_ORDERS
+    return pd.DataFrame(
+        {
+            "seller_id": ["low_hi", "low_mid", "ok_lo", "ok_hi", "tie_a", "tie_b", "star"],
+            "ahp_score": [0.99, 0.90, 0.60, 0.80, 0.70, 0.70, 0.95],
+            "order_volume": [5, n - 1, n, n + 2, n + 1, n, 100],
+            "quadrant": ["Hidden Gem"] * 6 + ["Star"],
+            "confidence": ["low", "low", "normal", "normal", "normal", "normal", "normal"],
+        }
+    )
+
+
+def test_default_top_hidden_gems_is_unchanged_and_has_no_tier_column() -> None:
+    gems = top_hidden_gems(_gem_frame(), n=10)
+    assert "tier" not in gems.columns
+    assert list(gems["seller_id"]) == ["low_hi", "low_mid", "ok_hi", "tie_a", "tie_b", "ok_lo"]
+
+
+def test_tiered_top_hidden_gems_lists_actionable_first_ranked_by_score_then_orders() -> None:
+    gems = top_hidden_gems(_gem_frame(), n=10, tiered=True)
+    assert list(gems["tier"]) == [TIER_ACTIONABLE] * 4 + [TIER_WATCHLIST] * 2
+    # Actionable by AHP descending; the 0.70 tie is broken by more orders first.
+    assert list(gems["seller_id"][:4]) == ["ok_hi", "tie_a", "tie_b", "ok_lo"]
+    assert list(gems["seller_id"][4:]) == ["low_hi", "low_mid"]
+
+
+def test_tier_boundary_at_14_versus_15_orders() -> None:
+    n = DISCOVERY_CONFIDENCE_MIN_ORDERS
+    quadrants = compute_quadrants(
+        pd.Series({"a": 0.9, "b": 0.9, "c": 0.1, "d": 0.1}),
+        pd.Series({"a": n - 1, "b": n, "c": 100, "d": 100}),
+        quality_threshold=0.5,
+        popularity_threshold=50,
+    )
+    gems = top_hidden_gems(quadrants, tiered=True).set_index("seller_id")
+    assert gems.loc["a", "tier"] == TIER_WATCHLIST  # 14 orders
+    assert gems.loc["b", "tier"] == TIER_ACTIONABLE  # 15 orders
+    assert hidden_gem_tier(confidence_flag(n - 1)) == TIER_WATCHLIST
+    assert hidden_gem_tier(confidence_flag(n)) == TIER_ACTIONABLE
+
+
+def test_tiered_top_hidden_gems_never_includes_other_quadrants_and_n_is_per_tier() -> None:
+    gems = top_hidden_gems(_gem_frame(), n=1, tiered=True)
+    assert set(gems["quadrant"]) == {"Hidden Gem"}
+    assert "star" not in set(gems["seller_id"])  # the high-scoring Star is never returned
+    assert list(gems["tier"]) == [TIER_ACTIONABLE, TIER_WATCHLIST]
+    assert list(gems["seller_id"]) == ["ok_hi", "low_hi"]
 
 
 def test_build_seller_facts_marks_missing_ahp_score_and_hidden_gem_explicitly() -> None:

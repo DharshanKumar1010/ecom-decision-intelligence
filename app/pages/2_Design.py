@@ -97,11 +97,16 @@ def _tradeoff_sentence() -> str:
 
 
 _TOP_EFFECTS = 5
+# Multiplicative nudges to calendar numbers (month 1-12, weekday 0-6) are not realistic
+# scenarios, so they are kept out of the short chart; the full heatmap still shows them.
+_CALENDAR_INPUTS = ("order_month", "day_of_week")
 
 
 def _largest_effects(sensitivity: pd.DataFrame) -> pd.DataFrame:
     """For the primary model, each input's single largest nudge effect; the top few overall."""
-    rf = sensitivity[sensitivity["model"] == "random_forest"].copy()
+    rf = sensitivity[
+        (sensitivity["model"] == "random_forest") & ~sensitivity["feature"].isin(_CALENDAR_INPUTS)
+    ].copy()
     rf["abs_change"] = rf["mean_late_risk_change"].abs()
     biggest = rf.sort_values("abs_change", ascending=False).drop_duplicates("feature")
     top = biggest.head(_TOP_EFFECTS).sort_values("mean_late_risk_change")
@@ -284,10 +289,10 @@ def render() -> None:
 
     section("What if an input changes?")
     show(_effects_chart(_largest_effects(load_report_csv("sensitivity.csv"))))
-    caption("Random forest, held-out test set: the average change in predicted late risk (a "
-            "probability from 0 to 1) when one input is nudged and the others are held fixed. "
-            f"The {_TOP_EFFECTS} largest effects are shown; the full view is in Technical "
-            "details.")
+    caption(f"Random forest: average change in predicted late risk when one input is nudged "
+            f"and the others are held fixed. The {_TOP_EFFECTS} largest effects are shown; month "
+            "and weekday are left out because scaling a calendar number is not a realistic "
+            "scenario. Full view in Technical details.")
 
     with technical():
         _technical(metrics, cv, importance)

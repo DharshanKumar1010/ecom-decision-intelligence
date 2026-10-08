@@ -55,11 +55,13 @@ Each page: what to click, then two sentences to say. Roughly 45 seconds each.
 
 ### 4. Discovery: "Which good sellers are we overlooking?"
 
-*Click:* hover a hollow dot; point at the top-left **Hidden Gem** label.
+*Click:* hover a hollow dot; point at the top-left **Hidden Gem** label; scroll to the two
+tables.
 
 > "Hidden gems are good sellers with few orders, so they are under-exposed; there are 478.
-> Most of them, 434, have under 15 orders and are shown hollow, because a few good reviews
-> are promising but not proof."
+> Only 44 have 15 or more orders and sit in the Actionable list; the other 434 are on the
+> Watchlist, shown hollow on the chart, because a few good reviews are promising but not
+> proof."
 
 ### 5. Implementation: "What should we do about this seller?"
 
@@ -101,8 +103,13 @@ half of its flags are right (precision 0.52), so it is a ranking aid, not an ora
 **4. Why are most hidden gems "low confidence"?**
 By definition a hidden gem has high quality but low popularity, and low popularity means few
 orders. 434 of the 478 hidden gems have fewer than 15 orders, just below the median of 18
-orders in the scored pool. A good average on a handful of orders could be luck, so the app
-marks them rather than pretending they are as certain as established sellers.
+orders in the scored pool, so only gems with 15 to 17 orders (44 of them) can be normal
+confidence. A good average on a handful of orders could be luck: 54 of the 478 have a
+perfect 5.0 average, and inside the gem group more orders goes with a slightly *lower*
+score (Spearman -0.19). That is why the page lists the 44 Actionable gems first and puts
+the rest on a Watchlist rather than ranking everyone together. We also tested shrinking
+each seller's averages toward the marketplace average; it removes some of the luckiest
+small sellers but changes who counts as a gem, so it is a separate decision, not adopted.
 
 **5. Can I trust the late-risk score shown for a seller?**
 Treat it as a pipeline output, not a held-out measurement. The model was trained on roughly

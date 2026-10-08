@@ -151,6 +151,7 @@ def test_streamlit_config_is_dark_and_has_no_telemetry() -> None:
     assert 'base = "dark"' in text and 'backgroundColor = "#0C1015"' in text
     assert 'secondaryBackgroundColor = "#141A22"' in text
     assert "gatherUsageStats = false" in text
+    assert 'toolbarMode = "minimal"' in text  # supported by the installed Streamlit
 
 
 def test_no_white_boxes_in_app_code_or_chart_template() -> None:
@@ -224,10 +225,13 @@ def test_design_shows_the_largest_sensitivity_effects(real_outputs: None) -> Non
     at = _run("Design")
     assert "What if an input changes?" in _markdown(at)
     sens = pd.read_csv(config.REPORTS_DIR / "sensitivity.csv")
-    rf = sens[sens["model"] == "random_forest"]
+    rf = sens[(sens["model"] == "random_forest")
+              & ~sens["feature"].isin(["order_month", "day_of_week"])]
     strongest = rf.loc[rf["mean_late_risk_change"].abs().idxmax()]
     bars = json.loads(at.get("plotly_chart")[1].proto.spec)["data"][0]
     assert bars["type"] == "bar" and len(bars["y"]) == 5
+    assert not any("Month of purchase" in label or "Day of the week" in label
+                   for label in bars["y"])  # calendar nudges are not realistic scenarios
     assert max(abs(v) for v in _decode(bars["x"])) == pytest.approx(
         abs(strongest["mean_late_risk_change"])
     )
@@ -309,10 +313,22 @@ def test_discovery_caution_counts_line_table_and_download(real_outputs: None) ->
     for label, count in quadrants["quadrant"].value_counts().items():
         assert re.search(rf"<b>{label}</b></span> {count:,}", text), label
 
-    table = next(df.value for df in at.dataframe if "Average review" in df.value.columns)
-    assert list(table.columns) == ["Seller", "Orders", "Average review", "Confidence"]
-    assert len(table) == 10 and table["Seller"].str.len().max() <= 9
-    assert table["Confidence"].str.startswith("low").any()
+    tables = [df.value for df in at.dataframe if "Average review" in df.value.columns]
+    assert len(tables) == 2  # Actionable, then Watchlist
+    actionable, watchlist = tables
+    for table in tables:
+        assert list(table.columns) == ["Seller", "Orders", "Average review", "Confidence"]
+        assert table["Seller"].str.len().max() <= 9
+    gems = quadrants[quadrants["quadrant"] == "Hidden Gem"]
+    n_actionable = int((gems["confidence"] == "normal").sum())
+    n_watch = int((gems["confidence"] == "low").sum())
+    assert f"Actionable ({n}+ orders): {n_actionable:,} sellers" in text
+    assert f"Watchlist (under {n} orders): {n_watch:,} sellers" in text
+    assert (actionable["Confidence"] == "normal").all() and (actionable["Orders"] >= n).all()
+    assert len(actionable) == min(10, n_actionable)
+    assert watchlist["Confidence"].str.startswith("low").all() and (watchlist["Orders"] < n).all()
+    assert "by definition, hidden gems have under" in text.lower()
+    assert "short rather than padded" not in text  # 44 Actionable gems: no padding message
     assert at.get("download_button")
     assert len(at.get("plotly_chart")) == 1
 
@@ -343,8 +359,9 @@ def test_implementation_default_seller_is_not_the_default_rule(real_outputs: Non
     assert row["rule_id"] != "R12"
     assert _displayed_action(at) == row["action"]
     assert len(at.metric) == 3  # three fact numbers
-    why = [m.value for m in at.markdown if "Why:" in m.value]
-    assert len(why) == 1 and why[0].count("Why:") == 1
+    text = _markdown(at)
+    assert "Why:" not in text  # the subtitle and the ticked conditions carry the reason
+    assert "- ✓" in text or "- ✕" in text
 
 
 def test_implementation_example_dropdown_replaces_the_buttons(real_outputs: None) -> None:

@@ -38,6 +38,13 @@ from src.config import (
 
 logger = get_logger(__name__)
 
+# Confidence tiers for presenting Hidden Gems. By construction a Hidden Gem has fewer orders
+# than the popularity median, so most gems fall under the confidence threshold; the tiers
+# keep the few well-supported picks ("Actionable") apart from the directional ones
+# ("Watchlist"). Tier follows `confidence_flag`, so the boundary is defined in one place.
+TIER_ACTIONABLE = "Actionable"
+TIER_WATCHLIST = "Watchlist"
+
 _QUADRANT_LABELS: tuple[str, str, str, str] = (
     "Star",
     "Hidden Gem",
@@ -57,6 +64,18 @@ def confidence_flag(order_count: float) -> str:
         else `"normal"`.
     """
     return "low" if order_count < DISCOVERY_CONFIDENCE_MIN_ORDERS else "normal"
+
+
+def hidden_gem_tier(confidence: str) -> str:
+    """Map a `confidence` flag to a presentation tier.
+
+    Args:
+        confidence: `"normal"` or `"low"` (as produced by `confidence_flag`).
+
+    Returns:
+        `"Actionable"` for normal confidence, `"Watchlist"` for low confidence.
+    """
+    return TIER_ACTIONABLE if confidence == "normal" else TIER_WATCHLIST
 
 
 def compute_quadrants(
@@ -116,20 +135,29 @@ def compute_quadrants(
     return combined.reset_index()
 
 
-def top_hidden_gems(quadrant_df: pd.DataFrame, n: int = 10) -> pd.DataFrame:
-    """Return the top N Hidden Gem sellers by AHP quality score.
+def top_hidden_gems(quadrant_df: pd.DataFrame, n: int = 10, tiered: bool = False) -> pd.DataFrame:
+    """Return the top Hidden Gem sellers.
 
     Args:
         quadrant_df: output of `compute_quadrants`.
-        n: number of sellers to return.
+        n: number of sellers to return (per tier when `tiered`).
+        tiered: if False (default), rank all gems together by AHP score. If True, add a
+            `tier` column and list `Actionable` (normal confidence) gems first, then
+            `Watchlist` (low confidence) gems, each ranked by `ahp_score` descending with
+            ties broken by `order_volume` descending, up to `n` rows per tier.
 
     Returns:
-        Up to `n` rows from `quadrant_df` where `quadrant == "Hidden Gem"`,
-        sorted by `ahp_score` descending, with `confidence` retained. Never
-        includes an `Overrated` or `Overlooked-Low-Quality` seller.
+        Rows from `quadrant_df` where `quadrant == "Hidden Gem"`, with `confidence`
+        retained. Never includes an `Overrated` or `Overlooked-Low-Quality` seller.
     """
     gems = quadrant_df[quadrant_df["quadrant"] == "Hidden Gem"]
-    return gems.sort_values("ahp_score", ascending=False).head(n).reset_index(drop=True)
+    if not tiered:
+        return gems.sort_values("ahp_score", ascending=False).head(n).reset_index(drop=True)
+
+    gems = gems.assign(tier=gems["confidence"].map(hidden_gem_tier))
+    ranked = gems.sort_values(["ahp_score", "order_volume"], ascending=[False, False])
+    parts = [ranked[ranked["tier"] == tier].head(n) for tier in (TIER_ACTIONABLE, TIER_WATCHLIST)]
+    return pd.concat(parts).reset_index(drop=True)
 
 
 def build_seller_facts(
@@ -191,15 +219,15 @@ def _write_summary(quadrant_df: pd.DataFrame, gems: pd.DataFrame) -> None:
 
     lines += [
         "",
-        "## Top hidden gems",
+        "## Top hidden gems (top 10 per tier)",
         "",
-        "| seller_id | ahp_score | order_volume | confidence |",
-        "|---|---|---|---|",
+        "| tier | seller_id | ahp_score | order_volume | confidence |",
+        "|---|---|---|---|---|",
     ]
     for _, row in gems.iterrows():
         lines.append(
-            f"| {row['seller_id']} | {row['ahp_score']:.4f} | {int(row['order_volume'])} "
-            f"| {row['confidence']} |"
+            f"| {row['tier']} | {row['seller_id']} | {row['ahp_score']:.4f} "
+            f"| {int(row['order_volume'])} | {row['confidence']} |"
         )
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -221,7 +249,7 @@ def main() -> None:
     order_counts = scored.set_index("seller_id")["order_volume"]
     quadrant_df = compute_quadrants(ahp_scores, order_counts)
 
-    gems = top_hidden_gems(quadrant_df)
+    gems = top_hidden_gems(quadrant_df, tiered=True)
     seller_facts = build_seller_facts(quadrant_df, late_predictions, fact)
 
     PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)

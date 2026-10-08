@@ -27,7 +27,7 @@ from app._components import (
     technical,
 )
 from src import config, explain
-from src.discovery import top_hidden_gems
+from src.discovery import TIER_ACTIONABLE, TIER_WATCHLIST, top_hidden_gems
 
 set_page("Discovery")
 _SUBTITLE = page_header("Which good sellers are we overlooking?")
@@ -115,15 +115,12 @@ def _counts_line(quadrants: pd.DataFrame) -> None:
     st.markdown(" · ".join(parts), unsafe_allow_html=True)
 
 
-def _gems_table(quadrants: pd.DataFrame) -> None:
-    gems = top_hidden_gems(quadrants, n=_TOP_N)
-    reviews = load_parquet("SellerFacts.parquet", columns=("seller_id", "avg_review"))
-    gems = gems.merge(reviews, on="seller_id", how="left")
+def _tier_table(rows: pd.DataFrame) -> None:
     shown = pd.DataFrame({
-        "Seller": gems["seller_id"].map(short_id),
-        "Orders": gems["order_volume"],
-        "Average review": gems["avg_review"],
-        "Confidence": gems["confidence"].map(
+        "Seller": rows["seller_id"].map(short_id),
+        "Orders": rows["order_volume"],
+        "Average review": rows["avg_review"],
+        "Confidence": rows["confidence"].map(
             {"low": f"low (under {_N_CONF} orders)", "normal": "normal"}
         ),
     })
@@ -134,12 +131,30 @@ def _gems_table(quadrants: pd.DataFrame) -> None:
             "Average review": st.column_config.NumberColumn(format="%.2f"),
         },
     )
-    all_gems = quadrants[quadrants["quadrant"] == "Hidden Gem"].sort_values(
-        "ahp_score", ascending=False
-    )
+
+
+def _gems_tables(quadrants: pd.DataFrame, popularity_line: float) -> None:
+    everyone = top_hidden_gems(quadrants, n=len(quadrants), tiered=True)
+    reviews = load_parquet("SellerFacts.parquet", columns=("seller_id", "avg_review"))
+    everyone = everyone.merge(reviews, on="seller_id", how="left")
+    counts = everyone["tier"].value_counts()
+
+    section("Hidden gems by confidence")
+    note(f"By definition, hidden gems have under {popularity_line:,.0f} orders, so most picks "
+         "are directional rather than proven.")
+    for tier, label in ((TIER_ACTIONABLE, f"Actionable ({_N_CONF}+ orders)"),
+                        (TIER_WATCHLIST, f"Watchlist (under {_N_CONF} orders)")):
+        total = int(counts.get(tier, 0))
+        st.markdown(f"**{label}: {total:,} sellers**")
+        rows = everyone[everyone["tier"] == tier].head(_TOP_N)
+        if tier == TIER_ACTIONABLE and total < _TOP_N:
+            st.markdown(f"Only {total} hidden gems have {_N_CONF}+ orders, so this list is "
+                        "short rather than padded.")
+        if total:
+            _tier_table(rows)
     st.download_button(
-        "Download all hidden gems (CSV, full seller ids)",
-        all_gems.to_csv(index=False).encode("utf-8"),
+        "Download all hidden gems (CSV, full seller ids, with tier)",
+        everyone.drop(columns=["avg_review"]).to_csv(index=False).encode("utf-8"),
         file_name="hidden_gems.csv",
         mime="text/csv",
     )
@@ -162,8 +177,7 @@ def render() -> None:
     note('Here "good" means sound business quality (reviews and on-time delivery), not food '
          "or nutrition: Olist has no such data.")
 
-    section(f"Top {_TOP_N} hidden gems")
-    _gems_table(quadrants)
+    _gems_tables(quadrants, popularity_line)
 
     with technical():
         definitions = explain.quadrant_definitions(quality_line, popularity_line)
@@ -177,8 +191,9 @@ def render() -> None:
             f"{config.DISCOVERY_MIN_ORDERS} orders, lower than the Choice page's "
             f"{config.AHP_MIN_ORDERS}."
         )
-        st.markdown("**Top hidden gems with full seller ids**")
-        st.dataframe(top_hidden_gems(quadrants, n=_TOP_N), hide_index=True, width="stretch")
+        st.markdown("**Top hidden gems per tier, with full seller ids**")
+        st.dataframe(top_hidden_gems(quadrants, n=_TOP_N, tiered=True), hide_index=True,
+                     width="stretch")
         st.markdown("**Every plotted seller**")
         st.dataframe(
             quadrants.sort_values("ahp_score", ascending=False),

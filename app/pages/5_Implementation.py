@@ -116,7 +116,6 @@ def _result_block(result: InferenceResult) -> None:
         f'style="color:{swatch.text}">{fired.action}</div>',
         unsafe_allow_html=True,
     )
-    st.markdown(explain.action_sentence(fired.action, fired, result.facts))
     checks = explain.condition_checks(fired, result.facts)
     if checks:
         st.markdown("\n".join(f"- {'✓' if ok else '✕'} {text}" for ok, text in checks))

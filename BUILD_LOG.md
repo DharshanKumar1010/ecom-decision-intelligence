@@ -290,3 +290,51 @@ all pass (counts in the final report of the change); `test_predict.py` still can
 here because scikit-learn is blocked by Application Control (see the environment notes).
 A headless boot returned HTTP 200 on the health endpoint and the server was stopped.
 Visual quality has not been checked in a browser.
+
+## Stage 4d — hidden gems by confidence tier, shrinkage diagnostic, small app fixes (not committed)
+
+**Problem.** The Discovery page's "Top 10 hidden gems" was 9/10 low-confidence and every
+one averaged exactly 5.00. A Hidden Gem has fewer orders than the popularity median (18) and
+low confidence is under 15, so only 15 to 17 order sellers can ever be normal-confidence.
+
+**Measured before any change** (`discovery_quadrants.csv` + `SellerFacts`): of the 478
+gems, 434 are low and 44 normal confidence. Order counts: 5:76, 6:54, 7:54, 8:44, 9:40,
+10:42, 11:41, 12:33, 13:27, 14:23, 15:16, 16:16, 17:12. 54 gems (11%) average exactly 5.0
+(2 of them normal confidence). Inside the gem quadrant the Spearman correlation between
+orders and AHP score is -0.19 (Pearson -0.20): more orders goes with a lower score, so the
+top of a plain AHP ranking is a small-sample artefact. Note that `order_volume` counts
+order items (`item_key`), not distinct orders; the UI wording was not changed.
+
+**Change (presentation only).** `src/discovery.py` gains `TIER_ACTIONABLE`/`TIER_WATCHLIST`,
+`hidden_gem_tier`, and `top_hidden_gems(..., tiered=False)`; with `tiered=True` it adds a
+`tier` column and lists Actionable (normal confidence) then Watchlist, each by AHP score
+with ties broken by order count, `n` rows per tier. The default call is unchanged and it
+still returns gems only. `main()` uses the tiered output for `reports/discovery_summary.md`.
+Quadrant membership, `is_hidden_gem`, rules and thresholds are untouched: re-running
+`python -m src.discovery` left `SellerFacts.parquet`, `discovery_quadrants.csv` and
+`seller_recommendations.csv` byte-identical (quadrants still 454/478/480/452); only the
+summary file changed. The Discovery page now shows two stacked tables, Actionable
+(15+ orders, 44 sellers) and Watchlist (under 15 orders, 434 sellers), with orders, average
+review and confidence, a plain sentence that gems by definition have under 18 orders, and a
+download with a `tier` column.
+
+**Diagnostic, nothing adopted** (`scripts/diagnostic_shrinkage.py`,
+`reports/diagnostic_shrinkage.txt`). Shrinking average review and on-time rate toward the
+global mean (prior strength k): k=5 keeps 464 gems (2 of the top 10 normal-confidence,
+Spearman 0.99 with the current scores), k=10 keeps 450 (4 of 10), k=15 keeps 441 (4 of 10),
+k=30 keeps 428 and adds 1 (5 of 10, Spearman 0.92); the 43 or 44 normal-confidence gems
+survive at every k. Shrinkage only removes sellers whose quality was a small-sample luck
+and reorders the top, but even k=30 leaves half of the top 10 low-confidence. Orders per
+active month as the popularity axis changes the definition itself: 444 gems, 117 of them
+new and 151 dropped, with sellers of up to 70 orders now counted as "low popularity", and
+0 of the top 10 normal-confidence. Recommendation: keep the tiers (done); consider
+shrinkage around k=10 to 15 as a separate, asked-for change, because it moves gem
+membership (about 30 to 40 fewer gems) and therefore `is_hidden_gem`, the Promote rules and
+their calibration; do not adopt the rate-based popularity measure.
+
+**App fixes.** (a) Design "What if an input changes?" leaves out month of purchase and day
+of the week (multiplicative nudges to calendar numbers are not realistic); they stay in the
+Technical details heatmap with its caveat, and the chart still shows five bars. (b)
+Implementation drops the separate "Why" sentence; the subtitle and the ticked conditions
+carry the reason. (c) `.streamlit/config.toml` sets `client.toolbarMode = "minimal"`
+(supported by the installed Streamlit 1.64).
