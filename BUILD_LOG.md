@@ -13,7 +13,7 @@ in place.
   and `mypy==1.13.0`, both verified working. If a new package hits this same
   block, pin to an older, long-established release rather than fighting the
   OS policy.
-- **Application Control now also blocks scikit-learn's compiled extensions (observed 2026-10-07).** After the OS build changed from 10.0.26200 to 10.0.26300 mid-project, `import sklearn` still works but `sklearn.metrics`, `sklearn.ensemble` etc. fail with `DLL load failed ... An Application Control policy has blocked this file` (a different `.pyd` each attempt: `_cython_blas`, `_radius_neighbors`, `_partition_nodes`). numpy, pandas, pyarrow, scipy and streamlit are unaffected. Effect: `tests/test_predict.py` cannot be collected and `python -m src.predict` cannot run on this machine until the policy is resolved. Nothing in `src/` was changed; the same tests passed earlier in the project. Not worked around (no policy bypass, no unrequested dependency change); needs a decision from the project owner.
+- **Application Control blocked scikit-learn's compiled extensions on 2026-10-07 and 2026-10-08; it no longer reproduces as of 2026-10-13.** After the OS build changed from 10.0.26200 to 10.0.26300, `import sklearn.metrics` etc. failed with `DLL load failed ... An Application Control policy has blocked this file` (a different `.pyd` each attempt). Details, the diagnosis and the re-run of `src.predict` are in the "scikit-learn Application Control block: diagnosis and resolution" entry at the end of this file. The sklearn binaries are still unsigned, so the verdict is Smart App Control's reputation decision and could change again; nothing was done to the policy.
 
 ## Stage 1 — data layer (reference)
 
@@ -452,3 +452,67 @@ script were corrected.
 
 **Gates.** See the final report of this change for ruff, mypy and pytest counts and the
 hash comparison.
+
+## scikit-learn Application Control block: diagnosis and resolution (2026-10-13, not committed)
+
+**Constraint.** No system security setting was changed (no Smart App Control, Defender,
+registry, WDAC policy or ACL change; no Unblock-File; no Mark-of-the-Web removal). Everything
+below was read-only except re-running `src.predict`.
+
+**Diagnosis (read-only).**
+- Python 3.11.9 64-bit, Windows 10.0.26300. Project `.venv`: scikit-learn 1.9.1, numpy 2.4.6,
+  scipy 1.17.1, pandas 2.2.3, joblib 1.6.0, threadpoolctl 3.7.0 (identical to `requirements.txt`).
+- Smart App Control is in enforcement mode (`VerifiedAndReputablePolicyState = 1`). The
+  CodeIntegrity/Operational log held 575 events of ID 3033/3077/3034 since 2026-10-04; nearly
+  all are Chrome's `libLiteRtWebGpuAccelerator.dll` (unrelated).
+- The only Python blocks (3033 "did not meet the Enterprise signing level requirements" with a
+  matching 3077 "or violated code integrity policy", Policy ID
+  {0283ac0f-fff1-49ae-ada1-8a933130cad6}, process `...\Python311\python.exe`):
+  `.venv\Lib\site-packages\sklearn\utils\_cython_blas.cp311-win_amd64.pyd` (2026-10-07 13:52
+  and 2026-10-08 19:05), `...\sklearn\metrics\_pairwise_distances_reduction\_radius_neighbors.cp311-win_amd64.pyd`
+  (2026-10-07 13:53) and `...\sklearn\neighbors\_partition_nodes.cp311-win_amd64.pyd`
+  (2026-10-07 13:53). No Python block was logged after 2026-10-08.
+- Import check (`import_check.py`, scratchpad): **23 of 23 pass** on 2026-10-13: numpy, scipy
+  (sparse, linalg, special, stats), joblib, threadpoolctl, sklearn (base, utils, impute,
+  preprocessing, pipeline, linear_model, tree, ensemble, metrics, model_selection, inspection,
+  and the three formerly blocked modules `utils._cython_blas`,
+  `metrics._pairwise_distances_reduction`, `neighbors`). A tiny in-memory fit of
+  RandomForest/DecisionTree/LogisticRegression pipelines, `roc_auc_score`,
+  `permutation_importance` and `StratifiedKFold` also ran.
+- The sklearn `.pyd` files are still `NotSigned` (69 compiled files), so the change is not a
+  signature; Smart App Control decides unsigned code by reputation, and that verdict changed.
+  It can change again.
+
+**Fix attempts.** Fresh-venv attempts with scikit-learn 1.5.2, 1.4.2 and 1.3.2 (and an older
+scipy) were **not run**: the project's own combination (1.9.1 / 2.4.6 / 1.17.1) imported
+cleanly, so there was nothing to fix and older versions would only force older numpy/scipy for
+no gain. The first combination that imports cleanly is therefore the installed one: nothing
+was installed, upgraded or force-reinstalled, and `requirements.txt` already pins these
+versions (checked against `pip freeze`; unchanged). If the block returns, the plan is: record
+the exact blocked paths from the event log, try 1.5.2, 1.4.2, 1.3.2 in that order each in a
+fresh venv under `%TEMP%`, and, if none imports, use WSL2 Ubuntu (install, clone, copy
+`data/raw`, create the venv, run the tests) rather than any bypass.
+
+| Combination | Result |
+|---|---|
+| scikit-learn 1.9.1, numpy 2.4.6, scipy 1.17.1, pandas 2.2.3 (project `.venv`) | 23/23 imports pass; `src.predict` and the full test suite run |
+| scikit-learn 1.5.2 / 1.4.2 / 1.3.2, fresh venvs | Not attempted (not needed) |
+
+**Re-running `src.predict`.** `reports/`, `models/` and `data/processed/LatePredictions.parquet`
+were first copied (with SHA-256 hashes) to `%TEMP%\ecom_backup_predict_20261013`, outside the
+repo. `python -m src.predict` then ran to completion (exit 0; about 7 minutes, almost all
+RandomForest training and permutation importance). Test ROC-AUC: logistic regression
+**0.6347**, decision tree **0.6738**, random forest **0.7841**, identical to the committed
+values (tolerance was 0.003). Comparison with the backup, file by file: 21 files, namely the reports,
+`LatePredictions.parquet` and the model pickles, are **byte-identical** (including the three
+`.joblib` models: random forest 423,821,922 bytes, decision tree 4,739 bytes, logistic
+regression 2,561 bytes). The only differences are the `timestamp`/`updated` fields in the four
+untracked `models/*_metadata.json` and `models/registry.json` files (rewritten with today's
+date). `git status` shows no change to any tracked file. The backup was therefore not needed
+for a restore.
+
+**Gates.** `ruff check .` clean; `mypy src` clean (12 files); the FULL `pytest` including
+`tests/test_predict.py` (no `--ignore`): **192 passed** (the previous 171 plus the 21
+`test_predict.py` tests that could not be collected while sklearn was blocked). A hash manifest
+of src, rules, data, reports and models taken before the run differs afterwards only in the
+untracked `models/*_metadata.json` and `models/registry.json` timestamps.
