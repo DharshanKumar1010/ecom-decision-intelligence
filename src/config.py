@@ -240,6 +240,19 @@ DISCOVERY_POPULARITY_THRESHOLD: float | None = None
 PREDICT_AUC_LEAK_GUARDRAIL: float = 0.95
 PREDICT_SENSITIVITY_PCTS: tuple[float, ...] = (-0.25, -0.10, 0.10, 0.25)
 
+# Order-grouped evaluation (src/predict.py). Items of one order share is_late and most
+# features, so rows are NEVER split at random: StratifiedGroupKFold over order_id makes
+# PREDICT_N_FOLDS folds. Fold 0 is the train/test split (1 / PREDICT_N_FOLDS = 20% test) used
+# for metrics, permutation importance, sensitivity and the persisted models; all folds
+# together give the out-of-fold late_risk written to LatePredictions.parquet.
+PREDICT_N_FOLDS: int = 5
+
+# RandomForest leaf size. Chosen from {1, 5, 20} under the order-grouped out-of-fold protocol
+# (reports/diagnostic_rf_leaf.txt): 20 gave the highest pooled OOF AUC (0.7367 vs 0.7233 for
+# fully grown trees) and a fitted model about 16% of the size. It was chosen on the same folds
+# it is reported on, so the gain is slightly optimistic.
+PREDICT_RF_MIN_SAMPLES_LEAF: int = 20
+
 # --------------------------------------------------------------------------
 # Expert system (src/expert.py + rules/seller_rules.yaml)
 #

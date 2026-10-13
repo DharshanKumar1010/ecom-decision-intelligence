@@ -516,3 +516,68 @@ for a restore.
 `test_predict.py` tests that could not be collected while sklearn was blocked). A hash manifest
 of src, rules, data, reports and models taken before the run differs afterwards only in the
 untracked `models/*_metadata.json` and `models/registry.json` timestamps.
+
+## Stage 6 — order-grouped evaluation and out-of-fold late risk (not committed)
+
+**Two suspected problems, measured first** (`scripts/diagnostic_group_leak.py`,
+`reports/diagnostic_group_leak.txt`; nothing committed was changed by it).
+1. Sibling leakage: items of one order share `is_late` and most features, but the split put
+   item rows at random into train and test; 18.34% of test items (16.75% of test orders) had a
+   sibling in train. Test AUC, random item split vs grouped by order (same seed and sizes):
+   logistic regression 0.6347 / 0.6259, decision tree 0.6738 / 0.6888, random forest (fully
+   grown) 0.7841 / 0.7274. The forest alone lost 0.057; its lead over the tree fell from 0.110
+   to 0.039.
+2. In-sample late risk: the committed `late_risk` scored every row with a model that had trained
+   on ~80% of them: AUC 1.0000 on its own training rows, 0.7841 on unseen rows; seller-level
+   `avg_late_risk` correlated 0.906 (0.925 for sellers with >= 5 items sold) with the actual
+   late rate, i.e. mostly an echo of it, then fed to the rules.
+
+**Changes.**
+- `src/predict.py`: `grouped_stratified_folds` (5 `StratifiedGroupKFold` folds over `order_id`,
+  shuffle, seed 42, `config.PREDICT_N_FOLDS`); fold 0 is THE train/test split (metrics,
+  permutation importance, sensitivity, persisted models); `out_of_fold_predictions` writes
+  out-of-fold `late_risk` (forest), `late_risk_lr`, `late_risk_dt` to `LatePredictions.parquet`
+  (fresh model per fold and model, category encoding refitted per fold, nothing persisted);
+  `reports/oof_metrics.json` holds grouped-test, out-of-fold and in-sample AUCs. The feature
+  table also carries `order_id` as a grouping key; the model features are unchanged.
+- Forest leaf size: `reports/diagnostic_rf_leaf.txt` (same grouped OOF protocol) gave pooled OOF
+  AUC 0.7233 / 0.7311 / 0.7367 and fitted size 421 / 193 / 68 MB for `min_samples_leaf`
+  1 / 5 / 20. Adopted 20 (`config.PREDICT_RF_MIN_SAMPLES_LEAF`), reading the "within 0.005"
+  rule as non-inferiority, since larger leaves were better, not just close; chosen on the
+  folds it is reported on, so slightly optimistic; end of the grid, larger values untried.
+- New numbers: grouped test AUC logistic regression 0.6259, decision tree 0.6888, random forest
+  0.7410; out-of-fold 0.6241 / 0.6856 / 0.7367 (forest fold std 0.0041); forest AUC on its own
+  training rows 0.9346 (1.0000 with fully grown trees). Persisted forest 68 MB (was 424 MB).
+  Seller-level correlation of `avg_late_risk` with the actual late rate: 0.339 (0.517 for
+  sellers with >= 5 items sold).
+- Rules: all `avg_late_risk` cutoffs were percentile-intent and were re-derived at the same
+  percentile of the new distribution: R01 0.178 to 0.416 (75th), R03 0.29 to 0.501 (90th), R06
+  and R10 0.106 to 0.339 (median), R09 0.05 to 0.252 (25th among gems). R08 keeps its literal
+  0.3 (now fires on 50.8% of gems, not 0% or 100%). R07's `because` text corrected (threshold
+  unchanged). Fired counts for all 12 rules and the action table are in
+  `docs/knowledge_engineering.md` section 9: Keep / Promote / Feature / Warn / Suspend went from
+  1,973 / 412 / 177 / 251 / 157 to 2,118 / 210 / 174 / 325 / 143 (521 sellers changed action;
+  Promote roughly halves because the in-sample risk of a gem was near zero).
+- App and docs: the Implementation fact note now says predicted risk is out-of-fold and a model
+  estimate (not a measured outcome); the Design page reads its cross-validation figures from
+  `reports/oof_metrics.json` (the old random-fold `diagnostic_rf_cv.txt` is superseded) and its
+  trade-off sentence is computed from the AUCs in the files; DEMO_SCRIPT questions 1, 3, 5, 6, 10
+  and 11 updated. No "model under review" flag existed, so none was removed.
+
+**Gates that held.** Quadrants unchanged (Star 495, Hidden Gem 437, Overrated 439,
+Overlooked-Low-Quality 493), the same 437 gems, and `ahp_ranking.csv`,
+`discovery_quadrants.csv` and `discovery_summary.md` are byte-identical.
+
+**Temporal check** (`scripts/diagnostic_temporal.py`, `reports/diagnostic_temporal.txt`; train on
+the earliest 80% of orders, test on the latest 20%, fully grown forest): all 12 features,
+logistic regression 0.3975, decision tree 0.5049, random forest 0.5210; without `order_month` and
+`day_of_week`, 0.4007 / 0.4188 / 0.4402. The forest stays nominally ahead, but no model has
+useful forward-looking skill (test period late rate 5.2% against 8.6% in training; possible
+censoring of long-delayed orders not verified). The random-forest adoption of Stage 3.5 was
+justified with random-fold CV that is now known to have been inflated; it remains the best model
+on unseen orders from the same period, with a smaller margin. The model family was NOT changed.
+
+**Surprises.** (1) The forward-looking AUCs are at or below 0.5. (2) The forest's memorised
+training rows did most of the work behind the seller-level risk the rules used. (3) With balanced
+class weights the score's median is 0.34 against a 7.9% late rate: it ranks, it is not a
+probability. (4) Fully grown trees were the worst leaf size by AUC as well as by size.

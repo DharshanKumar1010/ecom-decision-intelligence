@@ -1,8 +1,9 @@
 """Page 5 — Implementation: the expert system explains a seller recommendation (Unit 5).
 
 Only the rule engine runs live here. A seller's predicted late risk is read from the
-precomputed pipeline output (`SellerFacts`), which is largely scored on rows the model was
-trained on, so it is shown as a pipeline output, never as a held-out measurement.
+precomputed pipeline output (`SellerFacts`): the average of OUT-OF-FOLD scores, each made by a
+model that never saw any item of that item's order. It is still a model estimate, not a
+measured outcome, and is labelled as such.
 """
 
 from __future__ import annotations
@@ -196,8 +197,10 @@ def _technical(result: InferenceResult, kb: KnowledgeBase, row: pd.Series,
     st.markdown("**Other facts the rules use**")
     quality = "n/a" if pd.isna(row["ahp_score"]) else f"{row['ahp_score']:.3f}"
     st.markdown(
-        f"- Predicted late risk: {row['avg_late_risk']:.3f} (a pipeline output, not a "
-        "held-out measurement: the model has seen most of these items while learning)\n"
+        f"- Predicted late risk: {row['avg_late_risk']:.3f} (the average of out-of-fold "
+        "scores: each item was scored by a model that never saw any item of its order. It is "
+        "still a model estimate, not a measured outcome; the measured outcome is the actual "
+        "late rate)\n"
         f"- Quality (AHP) score: {quality} (needs at least {config.DISCOVERY_MIN_ORDERS} "
         "items sold)\n"
         f"- Hidden Gem: {'yes' if bool(row['is_hidden_gem']) else 'no'}"

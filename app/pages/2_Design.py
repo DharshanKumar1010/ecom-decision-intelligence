@@ -1,9 +1,11 @@
 """Page 2 — Design: the late-delivery models, what drives them, and sensitivity (Unit 3).
 
-Honesty note: `LatePredictions.parquet` is scored by models fitted on ~80% of those very
-rows, so it is largely in-sample. This page therefore never derives lift, gain or "catches
-X% of late orders" from it; every quality number here comes from the held-out metrics in
-`reports/model_metrics.json` and the cross-validation report.
+Honesty note: every quality number here comes from order-grouped evaluation (no order is in
+both train and test): the held-out metrics in `reports/model_metrics.json` and the
+out-of-fold metrics in `reports/oof_metrics.json`. `LatePredictions.parquet` is out-of-fold, but
+this page still does not derive lift, gain or "catches X% of late orders" from it; the
+temporal check (`reports/diagnostic_temporal.txt`) shows the models have little skill on
+future periods, so no claim here goes beyond ranking quality on unseen orders.
 """
 
 from __future__ import annotations
@@ -24,7 +26,6 @@ from app._common import (
     load_report_csv,
     load_report_json,
     load_report_text,
-    parse_cv_summary,
     report_path,
 )
 from app._components import (
@@ -46,7 +47,7 @@ from src import config, explain
 set_page("Design")
 _SUBTITLE = page_header("How likely is an order to arrive late, and why?")
 
-# key in model_metrics.json -> (display name, name in diagnostic_rf_cv.txt)
+# key in model_metrics.json -> (display name, name used for the grouped-CV summary)
 _MODELS = (
     ("random_forest", "Random forest", "RandomForest"),
     ("decision_tree", "Decision tree", "DecisionTree"),
@@ -57,9 +58,15 @@ _FLIP = "flip_0_1"
 
 
 def _cv() -> dict[str, tuple[float, float]]:
-    if report_path("diagnostic_rf_cv.txt").exists():
-        return parse_cv_summary(load_report_text("diagnostic_rf_cv.txt"))
-    return {}
+    """Out-of-fold ROC-AUC mean and std across the order-grouped folds, per model."""
+    if not report_path("oof_metrics.json").exists():
+        return {}
+    models = cast(dict[str, Any], load_report_json("oof_metrics.json"))["models"]
+    names = {key: cv_name for key, _, cv_name in _MODELS}
+    return {
+        names[key]: (float(m["oof_fold_auc_mean"]), float(m["oof_fold_auc_std"]))
+        for key, m in models.items() if key in names
+    }
 
 
 def _importance_chart(importance: pd.DataFrame) -> go.Figure:
@@ -82,17 +89,32 @@ def _importance_chart(importance: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def _tradeoff_sentence() -> str:
+def _tradeoff_sentence(metrics: dict[str, Any]) -> str:
+    aucs = {key: float(metrics[key]["roc_auc"]) for key, _, _ in _MODELS}
+    names = {key: display.lower() for key, display, _ in _MODELS}
+    best = max(aucs, key=lambda key: aucs[key])
+    others = [k for k in aucs if k != "random_forest"]
     size = config.MODELS_DIR / "random_forest.joblib"
     storage = (
         f" The saved forest takes about {size.stat().st_size / 1e6:,.0f} MB on disk."
         if size.exists()
         else ""
     )
-    return (
-        "The random forest is the primary model because it ranks late orders best. The "
-        "decision tree and the linear model rank less well but can be read step by step, "
-        "so they are kept for explanation." + storage
+    scores = ", ".join(f"{aucs[k] * 100:.0f}% for the {names[k]}" for k in others)
+    if best == "random_forest":
+        lead = (
+            "The random forest is the primary model because it ranks late orders best on "
+            f"orders it never saw ({aucs['random_forest'] * 100:.0f}%, against {scores}). "
+        )
+    else:
+        lead = (
+            "The random forest is the primary model, but on orders it never saw the "
+            f"{names[best]} now ranks at least as well ({aucs[best] * 100:.0f}% against "
+            f"{aucs['random_forest'] * 100:.0f}% for the forest). "
+        )
+    return lead + (
+        "The decision tree and the linear model can be read step by step, so they are kept "
+        "for explanation." + storage
     )
 
 
@@ -234,7 +256,7 @@ def _technical(metrics: dict[str, Any], cv: dict[str, tuple[float, float]],
             "F1 (late)": m["f1"]["1"],
         }
         if cv_name in cv:
-            row["5-fold CV ROC-AUC"] = f"{cv[cv_name][0]:.4f} ± {cv[cv_name][1]:.4f}"
+            row["Order-grouped 5-fold ROC-AUC"] = f"{cv[cv_name][0]:.4f} ± {cv[cv_name][1]:.4f}"
         rows.append(row)
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
     note(f"Stratified split, seed {config.SEED}; target is_late with base rate "
@@ -285,7 +307,7 @@ def render() -> None:
     caption(explain.top_drivers_sentence(
         dict(zip(importance["feature"], importance["importance_mean"], strict=True))
     ))
-    st.markdown(_tradeoff_sentence())
+    st.markdown(_tradeoff_sentence(metrics))
 
     section("What if an input changes?")
     show(_effects_chart(_largest_effects(load_report_csv("sensitivity.csv"))))

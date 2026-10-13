@@ -8,12 +8,24 @@ train/test split rather than the full model-metrics pipeline.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import pytest
+from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.pipeline import Pipeline
 
-from src.config import ALLOWED_FEATURES, PREDICT_AUC_LEAK_GUARDRAIL, RAW_DATA_DIR, verify_raw_files
+from src.config import (
+    ALLOWED_FEATURES,
+    PREDICT_AUC_LEAK_GUARDRAIL,
+    PREDICT_N_FOLDS,
+    PROCESSED_DATA_DIR,
+    RAW_DATA_DIR,
+    REPORTS_DIR,
+    verify_raw_files,
+)
 from src.predict import (
     _aggregate_geo_centroids,
     _build_pipelines,
@@ -29,6 +41,8 @@ from src.predict import (
     compute_seller_historical_late_rate,
     encode_product_category_frequency,
     fit_product_category_frequency,
+    grouped_stratified_folds,
+    out_of_fold_predictions,
 )
 
 _FORBIDDEN_COLUMNS = {
@@ -86,7 +100,8 @@ def test_feature_columns_equal_allowed_set_exactly(feature_table: pd.DataFrame) 
     # build_feature_table returns every precomputable ALLOWED_FEATURES column
     # plus the raw product_category string (encoded post-split, not itself a
     # feature) and item_key/is_late.
-    columns = set(feature_table.columns) - {"item_key", "is_late", "product_category"}
+    # order_id is the grouping key of the order-grouped split, never a model input.
+    columns = set(feature_table.columns) - {"item_key", "order_id", "is_late", "product_category"}
     assert columns == set(ALLOWED_FEATURES) - {"product_category_freq"}
 
 
@@ -460,10 +475,124 @@ def test_random_forest_uses_allowed_features_exactly(fitted_models: dict[str, An
 
 
 def test_random_forest_outperforms_committed_models(fitted_models: dict[str, Any]) -> None:
+    """Order-grouped test split: RF still ranks late orders better than DT and LR."""
     x_test, y_test = fitted_models["x_test"], fitted_models["y_test"]
     lr_auc = _evaluate(fitted_models["lr"], x_test, y_test)["roc_auc"]
     dt_auc = _evaluate(fitted_models["dt"], x_test, y_test)["roc_auc"]
     rf_auc = _evaluate(fitted_models["rf"], x_test, y_test)["roc_auc"]
-    # Regression guard: if a future change erodes RF's real, confirmed
-    # advantage (reports/diagnostic_rf_cv.txt), this test should fail.
+    # Regression guard on the order-grouped split (the earlier random-split evidence in
+    # reports/diagnostic_rf_cv.txt overstated RF's lead; see reports/diagnostic_group_leak.txt).
     assert rf_auc > dt_auc > lr_auc
+
+
+# --------------------------------------------------------------------------
+# Order-grouped evaluation (Stage 6): no sibling leakage, out-of-fold late_risk
+# --------------------------------------------------------------------------
+
+
+def test_grouped_split_puts_no_order_in_both_sets(feature_table: pd.DataFrame) -> None:
+    x_train, x_test, _, _, _ = _split_and_encode(feature_table)
+    train_orders = set(feature_table.loc[x_train.index, "order_id"])
+    test_orders = set(feature_table.loc[x_test.index, "order_id"])
+    assert train_orders.isdisjoint(test_orders)
+    assert set(x_train.index).isdisjoint(set(x_test.index))
+    share = len(x_test) / (len(x_train) + len(x_test))
+    assert abs(share - 1 / PREDICT_N_FOLDS) < 0.01
+
+
+def test_split_matrices_have_exactly_the_allowed_features(feature_table: pd.DataFrame) -> None:
+    x_train, x_test, _, _, _ = _split_and_encode(feature_table)
+    assert list(x_train.columns) == list(ALLOWED_FEATURES) == list(x_test.columns)
+    assert "order_id" not in x_train.columns and "is_late" not in x_train.columns
+
+
+def test_folds_partition_all_rows_and_keep_every_order_on_one_side(
+    feature_table: pd.DataFrame,
+) -> None:
+    folds = grouped_stratified_folds(feature_table)
+    assert len(folds) == PREDICT_N_FOLDS
+    all_tests = np.concatenate([test for _, test in folds])
+    assert len(all_tests) == len(feature_table) and len(set(all_tests)) == len(feature_table)
+    orders = feature_table["order_id"].to_numpy()
+    for train, test in folds:
+        assert set(orders[train]).isdisjoint(set(orders[test]))
+    # The base rate is near-identical across folds (stratified; every item of an order
+    # shares is_late).
+    rates = [feature_table["is_late"].to_numpy()[test].mean() for _, test in folds]
+    assert max(rates) - min(rates) < 0.01
+
+
+class _RecordingClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc]
+    """Stand-in model that remembers which rows it was fitted on."""
+
+    fitted_on: list[pd.Index] = []
+
+    def fit(self, x: pd.DataFrame, y: pd.Series) -> _RecordingClassifier:
+        type(self).fitted_on.append(x.index)
+        self.classes_ = np.array([0, 1])
+        return self
+
+    def predict_proba(self, x: pd.DataFrame) -> np.ndarray:
+        return np.full((len(x), 2), 0.5)
+
+
+def _synthetic_table(n_orders: int = 400) -> pd.DataFrame:
+    rng = np.random.default_rng(0)
+    rows = []
+    for order in range(n_orders):
+        late = int(rng.random() < 0.2)
+        for item in range(int(rng.integers(1, 4))):  # 1 to 3 sibling items per order
+            rows.append({"item_key": f"o{order}-{item}", "order_id": f"o{order}",
+                         "is_late": late, "product_category": "toys",
+                         **{f: rng.normal() for f in ALLOWED_FEATURES
+                            if f != "product_category_freq"}})
+    return pd.DataFrame(rows)
+
+
+def test_each_oof_prediction_comes_from_a_fold_whose_training_set_excludes_its_order() -> None:
+    table = _synthetic_table()
+    _RecordingClassifier.fitted_on = []
+    oof = out_of_fold_predictions(
+        table, {"late_risk": lambda: Pipeline([("clf", _RecordingClassifier())])}
+    )
+    assert len(_RecordingClassifier.fitted_on) == PREDICT_N_FOLDS
+    assert oof["item_key"].tolist() == table["item_key"].tolist()
+    order_of = table["order_id"].to_numpy()
+    for fold, train_index in enumerate(_RecordingClassifier.fitted_on):
+        held_out = np.flatnonzero(oof["fold"].to_numpy() == fold)
+        assert len(held_out) > 0
+        train_orders = set(order_of[table.index.get_indexer(train_index)])
+        assert train_orders.isdisjoint(set(order_of[held_out]))  # no sibling in training
+        assert set(held_out).isdisjoint(set(table.index.get_indexer(train_index)))
+    assert oof["late_risk"].between(0, 1).all() and not oof["late_risk"].isna().any()
+
+
+def test_real_oof_late_predictions_are_complete_and_consistent_with_the_report() -> None:
+    path = PROCESSED_DATA_DIR / "LatePredictions.parquet"
+    metrics_path = REPORTS_DIR / "oof_metrics.json"
+    if not (path.exists() and metrics_path.exists()):
+        pytest.skip("run python -m src.predict first")
+    predictions = pd.read_parquet(path)
+    assert list(predictions.columns) == ["item_key", "late_risk", "late_risk_lr", "late_risk_dt"]
+    assert not predictions.isna().any().any()
+    assert predictions[["late_risk", "late_risk_lr", "late_risk_dt"]].apply(
+        lambda s: s.between(0, 1).all()
+    ).all()
+    report = json.loads(metrics_path.read_text(encoding="utf-8"))
+    for name, model in report["models"].items():
+        assert model["oof_auc"] < PREDICT_AUC_LEAK_GUARDRAIL, name
+        assert model["grouped_test_auc"] < PREDICT_AUC_LEAK_GUARDRAIL, name
+        # A model scored on rows it trained on looks better than the honest out-of-fold number.
+        assert model["in_sample_auc_train_rows"] >= model["oof_auc"] - 1e-9, name
+
+
+def test_reported_test_aucs_match_a_fresh_grouped_fit(fitted_models: dict[str, Any]) -> None:
+    path = REPORTS_DIR / "model_metrics.json"
+    if not path.exists():
+        pytest.skip("run python -m src.predict first")
+    reported = json.loads(path.read_text(encoding="utf-8"))
+    x_test, y_test = fitted_models["x_test"], fitted_models["y_test"]
+    for key, name in (("lr", "logistic_regression"), ("dt", "decision_tree"),
+                      ("rf", "random_forest")):
+        fresh = _evaluate(fitted_models[key], x_test, y_test)["roc_auc"]
+        assert fresh == pytest.approx(reported[name]["roc_auc"], abs=1e-6), name

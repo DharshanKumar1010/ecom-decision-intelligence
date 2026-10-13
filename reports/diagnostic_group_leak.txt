@@ -1,0 +1,26 @@
+Diagnostic: sibling leakage and in-sample late_risk
+==============================================================================
+items 110,189; distinct orders 96,470; overall late rate 7.9082%
+
+(a) vs (b): test ROC-AUC, current configs, 12 features
+model                    random item split    grouped by order      drop
+logistic_regression                 0.6347              0.6259    0.0088
+decision_tree                       0.6738              0.6888   -0.0150
+random_forest                       0.7841              0.7274    0.0567
+
+random split : train 88,151 items / test 22,038 items; base rate train 7.9080%, test 7.9091%
+grouped split: train 88,151 items / test 22,038 items (20.00%); orders train 77,178 / test 19,292; base rate train 7.9080%, test 7.9091%
+
+(c) siblings across the random split
+share of test ITEMS whose order also has an item in train: 18.34%
+share of test ORDERS that also appear in train:             16.75%
+
+(d) AUC of the committed LatePredictions (late_risk = RandomForest, late_risk_lr, late_risk_dt)
+column            all rows    random-test rows   random-train rows
+late_risk           0.9724              0.7841              1.0000
+late_risk_lr        0.6260              0.6347              0.6238
+late_risk_dt        0.6945              0.6738              0.6998
+
+seller-level correlation: avg_late_risk (committed) vs actual late_rate
+all sellers                      n=2,970  Pearson 0.906  Spearman 0.775
+sellers with >= 5 items sold     n=1,864  Pearson 0.925  Spearman 0.885

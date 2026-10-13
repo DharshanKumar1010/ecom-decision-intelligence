@@ -1,0 +1,9 @@
+Diagnostic: RandomForest min_samples_leaf under the order-grouped OOF protocol
+==============================================================================
+ leaf  pooled OOF AUC  fold mean  fold std  vs leaf 1  fitted size MB  size vs leaf 1  minutes
+    1          0.7233     0.7233    0.0047    +0.0000           421.2         100.0%      2.4
+    5          0.7311     0.7310    0.0037    +0.0077           193.3          45.9%      2.2
+   20          0.7367     0.7367    0.0041    +0.0133            67.7          16.1%      1.9
+
+Rule: adopt only if pooled OOF AUC is within 0.005 of leaf 1 and the fitted size is materially smaller.
+Leaf sizes meeting the rule (AUC within tolerance and under half the size): [5, 20]

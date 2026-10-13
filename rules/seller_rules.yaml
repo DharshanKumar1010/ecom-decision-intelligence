@@ -56,6 +56,18 @@
 # 0.7308 (item level) -> 0.711 (order level, 90th); R11 0.604 -> 0.546 (item level) -> 0.549
 # (order level, 10th). Late-risk thresholds were deliberately left alone in these passes.
 # See docs/knowledge_engineering.md section 8.
+# Out-of-fold late_risk recalibration (Stage 6): LatePredictions.parquet used to hold the forest's
+# predictions for the very rows it trained on (train-row AUC 1.00), so seller-level
+# avg_late_risk was largely each seller's own late rate echoed back (correlation with the
+# actual late rate 0.91). It is now out-of-fold over order-grouped folds (correlation 0.34, 0.52
+# for sellers with >= 5 items) and sits on a different scale (median 0.34, not 0.11: with
+# balanced class weights it is a ranking score, not a probability). Every avg_late_risk
+# threshold was percentile-intent, so each was re-derived at the SAME percentile of the new
+# distribution: R01 0.178 -> 0.416 (75th pct, all sellers); R03 0.29 -> 0.501 (90th); R06 and
+# R10 0.106 -> 0.339 (median); R09 0.05 -> 0.252 (25th pct among Hidden Gems). R08 keeps its
+# literal < 0.3 tier: it now fires on about half of the gems, not on 0% or 100%, and 0.252 <
+# 0.3 keeps R09 a strict subset of R08. R07 only had its wording corrected (threshold
+# unchanged). See docs/knowledge_engineering.md section 9.
 # R02/R05/R11 reference late_rate (the EMPIRICAL is_late rate), not
 # avg_late_risk (the PREDICTED risk) -- late_rate never depended on which
 # model produces predictions, so their thresholds were checked and
@@ -65,7 +77,7 @@
 - id: R01
   priority: 100
   if:
-    - {fact: avg_late_risk, op: ">", value: 0.178}
+    - {fact: avg_late_risk, op: ">", value: 0.416}
     - {fact: avg_review, op: "<", value: 3.5}
   then: Suspend
   because: "Predicted late-delivery risk in the top quartile of sellers (recalibrated to RandomForest's real 75th percentile) combined with average reviews below 3.5 — the combination CLAUDE.md's own example rule targets."
@@ -82,7 +94,7 @@
   priority: 90
   if:
     - {fact: ahp_score, op: ">=", value: 0.711}
-    - {fact: avg_late_risk, op: "<", value: 0.106}
+    - {fact: avg_late_risk, op: "<", value: 0.339}
   then: Feature
   because: "AHP composite score in the top 10% of established sellers, with predicted late-delivery risk at or below the median (recalibrated to RandomForest's real median) — a proven, low-risk top performer worth featuring."
 
@@ -92,13 +104,13 @@
     - {fact: avg_review, op: ">=", value: 4.3}
     - {fact: order_volume, op: ">=", value: 83}
   then: Feature
-  because: "High order volume (90th percentile or above) sustained alongside a strong average review (top quartile) — scale without sacrificing quality."
+  because: "High order volume (items sold at or above the 90th percentile) sustained alongside a high average review (at least 4.3, a little above the median seller) — good reviews held at scale."
 
 - id: R09
   priority: 80
   if:
     - {fact: is_hidden_gem, op: "==", value: true}
-    - {fact: avg_late_risk, op: "<", value: 0.05}
+    - {fact: avg_late_risk, op: "<", value: 0.252}
   then: Promote
   because: "Hidden Gem quadrant member in roughly the lowest-risk quartile of Hidden Gems specifically (RandomForest predicted late-delivery risk) — high-confidence Promote candidate, worth acting on now rather than just worth considering."
 
@@ -113,7 +125,7 @@
 - id: R03
   priority: 70
   if:
-    - {fact: avg_late_risk, op: ">", value: 0.29}
+    - {fact: avg_late_risk, op: ">", value: 0.501}
   then: Warn
   because: "Predicted late-delivery risk in roughly the top 10% of sellers (recalibrated to RandomForest's real 90th percentile) on its own is a caution signal even without a confirmed review or volume problem yet."
 
@@ -136,7 +148,7 @@
 - id: R10
   priority: 50
   if:
-    - {fact: avg_late_risk, op: "<=", value: 0.106}
+    - {fact: avg_late_risk, op: "<=", value: 0.339}
     - {fact: avg_review, op: ">=", value: 4.28}
     - {fact: order_volume, op: ">=", value: 5}
   then: Keep

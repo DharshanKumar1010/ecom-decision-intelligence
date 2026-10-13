@@ -6,6 +6,15 @@ since those define the target and would leak it. `build_feature_table`'s
 output columns (minus the one exception below) are asserted against
 `ALLOWED_FEATURES` and tested.
 
+Evaluation is ORDER-GROUPED. Items of one order share `is_late` and most features, so
+splitting item rows at random would put siblings on both sides and let an unlimited-depth
+forest memorise them. `grouped_stratified_folds` builds 5 `StratifiedGroupKFold` folds over
+`order_id`; fold 0 is the train/test split used for every metric, permutation importance,
+sensitivity run and persisted model, and the 5 folds together give out-of-fold predictions
+(`out_of_fold_predictions`) that fill `LatePredictions.parquet`, so no item's `late_risk`
+comes from a model that saw its order. Seller-level `avg_late_risk` is therefore not an
+in-sample echo of the seller's own late rate.
+
 Three models are trained on the identical split and feature set:
 `LogisticRegression` and `DecisionTreeClassifier` (kept for interpretability
 — readable coefficients / a printable rule path) and `RandomForestClassifier`
@@ -40,6 +49,7 @@ number (CLAUDE.md section 7.3).
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -51,7 +61,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.inspection import permutation_importance
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import confusion_matrix, precision_recall_fscore_support, roc_auc_score
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier, export_text
@@ -60,6 +70,8 @@ from src.config import (
     ALLOWED_FEATURES,
     MODELS_DIR,
     PREDICT_AUC_LEAK_GUARDRAIL,
+    PREDICT_N_FOLDS,
+    PREDICT_RF_MIN_SAMPLES_LEAF,
     PREDICT_SENSITIVITY_PCTS,
     PROCESSED_DATA_DIR,
     RAW_DATA_DIR,
@@ -339,7 +351,8 @@ def build_feature_table(
         customer_zips: second element of `_load_seller_customer_zips`.
 
     Returns:
-        DataFrame with `item_key`, every precomputable feature in
+        DataFrame with `item_key`, `order_id` (the grouping key for the
+        order-grouped split; never a model input), every precomputable feature in
         `config.ALLOWED_FEATURES` (i.e. everything except
         `product_category_freq`), the raw `product_category` string (not
         itself a model feature — encoded post-split by `_split_and_encode`),
@@ -372,7 +385,9 @@ def build_feature_table(
         how="left",
     )
 
-    result = table[["item_key", *_PRECOMPUTED_FEATURES, "product_category", "is_late"]].copy()
+    result = table[
+        ["item_key", "order_id", *_PRECOMPUTED_FEATURES, "product_category", "is_late"]
+    ].copy()
 
     na_counts = result[list(_PRECOMPUTED_FEATURES)].isna().sum()
     for feature, count in na_counts.items():
@@ -420,44 +435,111 @@ def encode_product_category_frequency(
     return categories.map(frequency_map).fillna(0.0)
 
 
+def grouped_stratified_folds(
+    table: pd.DataFrame, n_splits: int = PREDICT_N_FOLDS
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Order-grouped, stratified folds: no `order_id` appears on both sides of any fold.
+
+    `StratifiedGroupKFold(shuffle=True, random_state=SEED)` over `order_id` groups,
+    stratified by `is_late` (every item of an order shares it, so stratification is
+    near-exact). The test sets of the folds partition all rows.
+
+    Args:
+        table: output of `build_feature_table` (needs `order_id` and `is_late`).
+        n_splits: number of folds.
+
+    Returns:
+        A list of `(train_positions, test_positions)` integer arrays (positions, not index
+        labels), one pair per fold.
+    """
+    splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
+    orders = table["order_id"].to_numpy()
+    folds: list[tuple[np.ndarray, np.ndarray]] = []
+    for train_pos, test_pos in splitter.split(table[[_TARGET]], table[_TARGET], groups=orders):
+        assert set(orders[train_pos]).isdisjoint(orders[test_pos]), "an order is in both sets"
+        folds.append((train_pos, test_pos))
+    return folds
+
+
+def _features_with_category_freq(part: pd.DataFrame, freq_map: dict[str, float]) -> pd.DataFrame:
+    """The model matrix (exactly `ALLOWED_FEATURES`) with the train-fitted category encoding."""
+    encoded = part.assign(
+        product_category_freq=encode_product_category_frequency(
+            part["product_category"], freq_map
+        )
+    )
+    return encoded[list(ALLOWED_FEATURES)]
+
+
 def _split_and_encode(
-    table: pd.DataFrame,
+    table: pd.DataFrame, folds: list[tuple[np.ndarray, np.ndarray]] | None = None
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, dict[str, float]]:
-    """Stratified 80/20 split, then fit/apply product_category encoding on train only.
+    """Order-grouped stratified 80/20 split (fold 0), then product_category encoding on train only.
 
     Args:
         table: output of `build_feature_table` (must contain every column in
-            `_PRECOMPUTED_FEATURES`, `product_category`, and `is_late`).
+            `_PRECOMPUTED_FEATURES`, `product_category`, `order_id` and `is_late`).
+        folds: precomputed `grouped_stratified_folds(table)` (computed if omitted).
 
     Returns:
         `(x_train, x_test, y_train, y_test, category_freq_map)`: the first
         four have exactly `config.ALLOWED_FEATURES` columns;
-        `category_freq_map` is returned so callers (e.g. the full-table
-        `LatePredictions` pass) can apply the same train-fitted encoding
-        elsewhere without refitting it.
+        `category_freq_map` is returned so callers can apply the same
+        train-fitted encoding elsewhere without refitting it. No order and no row is
+        in both sets.
     """
-    table_train, table_test = train_test_split(
-        table, test_size=0.2, stratify=table[_TARGET], random_state=SEED
-    )
+    train_pos, test_pos = (folds or grouped_stratified_folds(table))[0]
+    table_train, table_test = table.iloc[train_pos], table.iloc[test_pos]
     assert set(table_train.index).isdisjoint(set(table_test.index)), "train/test overlap"
+    assert set(table_train["order_id"]).isdisjoint(set(table_test["order_id"])), (
+        "an order is in both train and test"
+    )
 
     category_freq_map = fit_product_category_frequency(table_train["product_category"])
-    table_train = table_train.assign(
-        product_category_freq=encode_product_category_frequency(
-            table_train["product_category"], category_freq_map
-        )
-    )
-    table_test = table_test.assign(
-        product_category_freq=encode_product_category_frequency(
-            table_test["product_category"], category_freq_map
-        )
-    )
+    x_train = _features_with_category_freq(table_train, category_freq_map)
+    x_test = _features_with_category_freq(table_test, category_freq_map)
+    return x_train, x_test, table_train[_TARGET], table_test[_TARGET], category_freq_map
 
-    x_train = table_train[list(ALLOWED_FEATURES)]
-    x_test = table_test[list(ALLOWED_FEATURES)]
-    y_train = table_train[_TARGET]
-    y_test = table_test[_TARGET]
-    return x_train, x_test, y_train, y_test, category_freq_map
+
+def out_of_fold_predictions(
+    table: pd.DataFrame,
+    builders: Mapping[str, Callable[[], Pipeline]],
+    folds: list[tuple[np.ndarray, np.ndarray]] | None = None,
+) -> pd.DataFrame:
+    """Out-of-fold predicted late probability for EVERY row, one fresh model per fold.
+
+    For each order-grouped fold the product-category frequency map is fitted on that fold's
+    training rows only, a new pipeline is built and fitted per model, and only the held-out
+    rows are scored, so each prediction comes from a model that never saw any item of that
+    item's order. Fold models are not persisted.
+
+    Args:
+        table: output of `build_feature_table`.
+        builders: output column name -> zero-argument pipeline factory.
+        folds: precomputed `grouped_stratified_folds(table)` (computed if omitted).
+
+    Returns:
+        DataFrame with `item_key`, one probability column per builder, and `fold` (the fold
+        in which the row was held out).
+    """
+    folds = folds or grouped_stratified_folds(table)
+    predictions = {name: np.full(len(table), np.nan) for name in builders}
+    fold_of = np.full(len(table), -1, dtype=int)
+    for fold_number, (train_pos, test_pos) in enumerate(folds):
+        train, test = table.iloc[train_pos], table.iloc[test_pos]
+        assert set(train["order_id"]).isdisjoint(set(test["order_id"])), "order in both sets"
+        freq_map = fit_product_category_frequency(train["product_category"])
+        x_train = _features_with_category_freq(train, freq_map)
+        x_test = _features_with_category_freq(test, freq_map)
+        for name, build in builders.items():
+            pipeline = build()
+            pipeline.fit(x_train, train[_TARGET])
+            predictions[name][test_pos] = pipeline.predict_proba(x_test)[:, 1]
+        fold_of[test_pos] = fold_number
+    assert (fold_of >= 0).all(), "some rows were never held out"
+    for name, values in predictions.items():
+        assert not np.isnan(values).any(), f"{name} has unscored rows"
+    return pd.DataFrame({"item_key": table["item_key"].to_numpy(), **predictions, "fold": fold_of})
 
 
 def _build_pipelines() -> tuple[Pipeline, Pipeline]:
@@ -486,13 +568,18 @@ def _build_pipelines() -> tuple[Pipeline, Pipeline]:
     return lr_pipeline, dt_pipeline
 
 
-def _build_rf_pipeline() -> Pipeline:
+def _build_rf_pipeline(min_samples_leaf: int = PREDICT_RF_MIN_SAMPLES_LEAF) -> Pipeline:
     """Construct the (unfitted) RandomForest pipeline — the primary model.
 
     Hyperparameters are hardcoded inline, matching how `_build_pipelines`
     already hardcodes LR's/DT's own hyperparameters (existing convention,
-    not a new one). Adopted based on confirmed cross-validated evidence —
-    see the module docstring.
+    not a new one). Adopted based on cross-validated evidence — see the module
+    docstring and BUILD_LOG.md for how that evidence was re-examined under an order-grouped
+    protocol.
+
+    Args:
+        min_samples_leaf: forest leaf size (1 = fully grown; larger shrinks the fitted model);
+            defaults to `config.PREDICT_RF_MIN_SAMPLES_LEAF`.
 
     Returns:
         An unfitted `Pipeline` starting with a `SimpleImputer(strategy="median")`
@@ -505,7 +592,7 @@ def _build_rf_pipeline() -> Pipeline:
                 "clf",
                 RandomForestClassifier(
                     n_estimators=300, max_depth=None, class_weight="balanced",
-                    random_state=SEED,
+                    min_samples_leaf=min_samples_leaf, random_state=SEED, n_jobs=1,
                 ),
             ),
         ]
@@ -596,6 +683,68 @@ def _sensitivity_analysis(
     return pd.DataFrame(rows)
 
 
+def _write_oof_metrics(
+    table: pd.DataFrame,
+    folds: list[tuple[np.ndarray, np.ndarray]],
+    oof: pd.DataFrame,
+    fitted: Mapping[str, Pipeline],
+    all_metrics: tuple[tuple[str, dict[str, Any]], ...],
+    category_freq_map: dict[str, float],
+) -> None:
+    """Write reports/oof_metrics.json: grouped-test vs out-of-fold vs in-sample AUC per model.
+
+    "In-sample" is what the persisted models (fitted on the fold-0 train rows) give on rows
+    they trained on; it is the number the old all-rows `late_risk` implicitly reported and is
+    deliberately NOT used anywhere downstream.
+    """
+    y = table[_TARGET].to_numpy()
+    train_pos, test_pos = folds[0]
+    x_all = _features_with_category_freq(table, category_freq_map)
+    columns = {"logistic_regression": "late_risk_lr", "decision_tree": "late_risk_dt",
+               "random_forest": "late_risk"}
+    models: dict[str, Any] = {}
+    for name, metrics in all_metrics:
+        oof_proba = oof[columns[name]].to_numpy()
+        fold_aucs = [
+            float(roc_auc_score(y[test], oof_proba[test])) for _, test in folds
+        ]
+        in_sample = fitted[name].predict_proba(x_all)[:, 1]
+        oof_auc = float(roc_auc_score(y, oof_proba))
+        if oof_auc > PREDICT_AUC_LEAK_GUARDRAIL:
+            raise AssertionError(f"{name} out-of-fold ROC-AUC {oof_auc:.4f} exceeds the guardrail")
+        models[name] = {
+            "grouped_test_auc": metrics["roc_auc"],
+            "oof_auc": oof_auc,
+            "oof_fold_aucs": fold_aucs,
+            "oof_fold_auc_mean": float(np.mean(fold_aucs)),
+            "oof_fold_auc_std": float(np.std(fold_aucs)),
+            "in_sample_auc_train_rows": float(roc_auc_score(y[train_pos], in_sample[train_pos])),
+            "in_sample_auc_all_rows": float(roc_auc_score(y, in_sample)),
+        }
+        logger.info("%s ROC-AUC: grouped test %.4f | out-of-fold %.4f | in-sample (train rows) "
+                    "%.4f", name, metrics["roc_auc"], oof_auc,
+                    models[name]["in_sample_auc_train_rows"])
+    report = {
+        "protocol": (
+            f"StratifiedGroupKFold({len(folds)}, shuffle=True, random_state={SEED}) over order_id; "
+            "fold 0 is the train/test split of model_metrics.json; late_risk columns of "
+            "LatePredictions.parquet are out-of-fold"
+        ),
+        "n_folds": len(folds),
+        "split": {
+            "train_items": int(len(train_pos)),
+            "test_items": int(len(test_pos)),
+            "train_orders": int(table.iloc[train_pos]["order_id"].nunique()),
+            "test_orders": int(table.iloc[test_pos]["order_id"].nunique()),
+            "base_rate_train": float(y[train_pos].mean()),
+            "base_rate_test": float(y[test_pos].mean()),
+        },
+        "models": models,
+    }
+    with (REPORTS_DIR / "oof_metrics.json").open("w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2)
+
+
 def main() -> None:
     """Run the full predict pipeline: build features, train, evaluate, write outputs."""
     fact = pd.read_parquet(PROCESSED_DATA_DIR / "FactOrderItems.parquet")
@@ -610,9 +759,14 @@ def main() -> None:
         fact, dim_product, dim_seller, dim_customer, payments,
         geo_centroids, seller_zips, customer_zips,
     )
-    x_train, x_test, y_train, y_test, category_freq_map = _split_and_encode(table)
-    logger.info("Train/test split: %d / %d rows, base rate %.4f%%", len(x_train), len(x_test),
-                float(y_test.mean()) * 100)
+    folds = grouped_stratified_folds(table)
+    x_train, x_test, y_train, y_test, category_freq_map = _split_and_encode(table, folds)
+    train_orders = table.iloc[folds[0][0]]["order_id"].nunique()
+    test_orders = table.iloc[folds[0][1]]["order_id"].nunique()
+    logger.info(
+        "Order-grouped train/test split: %d / %d items, %d / %d orders, base rate %.4f%%",
+        len(x_train), len(x_test), train_orders, test_orders, float(y_test.mean()) * 100,
+    )
 
     lr_pipeline, dt_pipeline = _build_pipelines()
     rf_pipeline = _build_rf_pipeline()
@@ -694,22 +848,27 @@ def main() -> None:
     )
     sensitivity.to_csv(REPORTS_DIR / "sensitivity.csv", index=False)
 
-    full_table = table.assign(
-        product_category_freq=encode_product_category_frequency(
-            table["product_category"], category_freq_map
-        )
+    # late_risk is OUT-OF-FOLD: every item is scored by a model fitted on folds that contain
+    # none of that item's order (see `out_of_fold_predictions`), so seller-level averages are
+    # not an in-sample echo of the seller's own late rate. Primary: RandomForest (module
+    # docstring); LR's/DT's predictions are kept alongside for the interpretability story.
+    oof = out_of_fold_predictions(
+        table,
+        {
+            "late_risk": _build_rf_pipeline,
+            "late_risk_lr": lambda: _build_pipelines()[0],
+            "late_risk_dt": lambda: _build_pipelines()[1],
+        },
+        folds,
     )
-    full_x = full_table[list(ALLOWED_FEATURES)]
-    late_predictions = table[["item_key"]].copy()
-    # Primary: RandomForest, adopted based on confirmed CV evidence (module
-    # docstring). LR's/DT's predictions are kept alongside for the
-    # interpretability story, not discarded.
-    late_predictions["late_risk"] = rf_pipeline.predict_proba(full_x)[:, 1]
-    late_predictions["late_risk_lr"] = lr_pipeline.predict_proba(full_x)[:, 1]
-    late_predictions["late_risk_dt"] = dt_pipeline.predict_proba(full_x)[:, 1]
+    late_predictions = oof[["item_key", "late_risk", "late_risk_lr", "late_risk_dt"]].copy()
     for col in ("late_risk", "late_risk_lr", "late_risk_dt"):
         assert late_predictions[col].between(0, 1).all(), f"{col} outside [0, 1]"
     late_predictions.to_parquet(PROCESSED_DATA_DIR / "LatePredictions.parquet", index=False)
+    _write_oof_metrics(
+        table, folds, oof, {"logistic_regression": lr_pipeline, "decision_tree": dt_pipeline,
+                            "random_forest": rf_pipeline}, all_metrics, category_freq_map,
+    )
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     joblib.dump(lr_pipeline, MODELS_DIR / "logistic_regression.joblib")
@@ -751,8 +910,8 @@ def main() -> None:
 
     logger.info(
         "Wrote model_metrics.json, decision_tree.txt, coefficients.csv, "
-        "feature_importance.csv, rf_feature_importance.csv, sensitivity.csv, "
-        "LatePredictions.parquet (%d rows), 3 joblib models with per-model metadata, "
+        "feature_importance.csv, rf_feature_importance.csv, sensitivity.csv, oof_metrics.json, "
+        "out-of-fold LatePredictions.parquet (%d rows), 3 joblib models with per-model metadata, "
         "and models/registry.json (primary=random_forest)",
         len(late_predictions),
     )

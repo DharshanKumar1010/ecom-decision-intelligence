@@ -67,14 +67,21 @@ def test_feature_fires_for_top_established_seller(engine: InferenceEngine) -> No
     assert result.fired_rule.action == "Feature"
 
 
+def _risk_cutoff(engine: InferenceEngine, rule_id: str) -> float:
+    rule = next(r for r in engine.knowledge_base.rules if r.id == rule_id)
+    return float(next(c.value for c in rule.conditions if c.fact == "avg_late_risk"))
+
+
 def test_promote_fires_via_r08_for_moderate_low_risk_hidden_gem(engine: InferenceEngine) -> None:
+    # Between R09's tighter cutoff and R08's looser one, read from the real rule file.
+    risk = (_risk_cutoff(engine, "R09") + _risk_cutoff(engine, "R08")) / 2
     facts = WorkingMemory(
-        seller_id="gem", ahp_score=0.75, avg_late_risk=0.2, avg_review=4.5,
+        seller_id="gem", ahp_score=0.65, avg_late_risk=risk, avg_review=4.5,
         order_volume=8, late_rate=0.0, is_hidden_gem=True,
     ).as_facts()
     result = engine.run(facts)
     assert result.fired_rule.action == "Promote"
-    # 0.2 is below R08's 0.3 but not below R09's tighter 0.05 -- only R08 matches.
+    # Below R08's cutoff but not below R09's tighter one -- only R08 matches.
     assert result.fired_rule.id == "R08"
 
 

@@ -1,0 +1,59 @@
+{
+  "protocol": "StratifiedGroupKFold(5, shuffle=True, random_state=42) over order_id; fold 0 is the train/test split of model_metrics.json; late_risk columns of LatePredictions.parquet are out-of-fold",
+  "n_folds": 5,
+  "split": {
+    "train_items": 88151,
+    "test_items": 22038,
+    "train_orders": 77178,
+    "test_orders": 19292,
+    "base_rate_train": 0.0790802146317115,
+    "base_rate_test": 0.0790906615845358
+  },
+  "models": {
+    "logistic_regression": {
+      "grouped_test_auc": 0.6258558324382597,
+      "oof_auc": 0.6241190919138937,
+      "oof_fold_aucs": [
+        0.6258558324382597,
+        0.6180541827324078,
+        0.637380497591637,
+        0.6206420020701537,
+        0.6198304780732051
+      ],
+      "oof_fold_auc_mean": 0.6243525985811328,
+      "oof_fold_auc_std": 0.0070124747017880715,
+      "in_sample_auc_train_rows": 0.6274064421112645,
+      "in_sample_auc_all_rows": 0.6270937016170086
+    },
+    "decision_tree": {
+      "grouped_test_auc": 0.6887566031556629,
+      "oof_auc": 0.6855891613165301,
+      "oof_fold_aucs": [
+        0.6887566031556629,
+        0.6821446769727697,
+        0.6863797590590455,
+        0.6907238569595313,
+        0.6800683040471462
+      ],
+      "oof_fold_auc_mean": 0.685614640038831,
+      "oof_fold_auc_std": 0.003984066352305984,
+      "in_sample_auc_train_rows": 0.6936751988997178,
+      "in_sample_auc_all_rows": 0.6926905965785929
+    },
+    "random_forest": {
+      "grouped_test_auc": 0.7410158000813305,
+      "oof_auc": 0.7366580113398521,
+      "oof_fold_aucs": [
+        0.7410158000813305,
+        0.7314826617206871,
+        0.741329539691389,
+        0.7325833513902864,
+        0.7370248388761467
+      ],
+      "oof_fold_auc_mean": 0.736687238351968,
+      "oof_fold_auc_std": 0.004106845226934008,
+      "in_sample_auc_train_rows": 0.9346426855721459,
+      "in_sample_auc_all_rows": 0.8972464819605109
+    }
+  }
+}

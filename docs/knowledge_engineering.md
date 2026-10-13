@@ -542,3 +542,151 @@ below 4.0 (lowest 4.07); the sellers that left the group were mainly those with 
 (9.9% late against 1.4%). So no extra caveat was added to the Discovery page or the demo
 script. The 17 entrants are the one place worth knowing: 5 of them sit just below the
 marketplace mean on reviews and qualify on a near-perfect delivery record.
+
+
+## 9. Order-grouped evaluation and out-of-fold late risk (Stage 6)
+
+Sections 5 and 5b above describe the late-risk thresholds as they were calibrated against the
+in-sample RandomForest scores; the thresholds and numbers in this section supersede them.
+
+**Two problems, both measured before anything was changed**
+(`scripts/diagnostic_group_leak.py`, `reports/diagnostic_group_leak.txt`).
+
+1. *Sibling leakage.* Items of one order share `is_late` and most features (110,189 items =
+   97,811 seller-order pairs = 96,470 orders), but the old split put individual item rows at
+   random into train and test: 18.34% of the test items (16.75% of the test orders) had an
+   item of the same order in train. Test ROC-AUC, random item split vs a split grouped by
+   `order_id` (same seed, same sizes: 88,151 / 22,038 items, base rate 7.908% / 7.909% on both):
+
+   | Model | Random item split | Grouped by order | Change |
+   |---|---|---|---|
+   | Logistic regression | 0.6347 | 0.6259 | -0.0088 |
+   | Decision tree | 0.6738 | 0.6888 | +0.0150 |
+   | Random forest (fully grown) | 0.7841 | 0.7274 | **-0.0567** |
+
+   The forest was the model that profited from siblings; its lead over the decision tree fell
+   from 0.110 to 0.039. The decision tree went up by 0.015 (noise at this size, or a lucky
+   partition; the folds below show a spread of about 0.004).
+2. *In-sample late risk.* The committed `late_risk` was the forest's prediction for every row,
+   including the rows it trained on: AUC 1.0000 on its own training rows, 0.7841 on the rows it
+   had not seen, 0.9724 over all rows. At seller level `avg_late_risk` correlated with the
+   seller's actual late rate at Pearson 0.906 (Spearman 0.775) over all 2,970 sellers, 0.925
+   (0.885) over the 1,864 with at least 5 items sold: largely the seller's own late rate echoed
+   back, then fed to the Suspend, Warn, Feature, Promote and Keep rules.
+
+**Fix.** `src/predict.py` now builds 5 `StratifiedGroupKFold` folds over `order_id` (shuffle,
+seed 42) in one place, `grouped_stratified_folds`. Fold 0 is the single train/test definition
+(metrics, permutation importance, sensitivity, persisted models); all five folds give
+out-of-fold predictions (`out_of_fold_predictions`, one fresh model per fold and model, the
+product-category encoding refitted on each fold's training rows, nothing persisted) that fill
+`LatePredictions.parquet`. Features, seed and model configs are unchanged, except the forest's
+leaf size (below). `reports/oof_metrics.json` carries the comparison:
+
+| Model | Grouped test (fold 0) | Out-of-fold, 5 folds | Fold mean / std | AUC on its own training rows |
+|---|---|---|---|---|
+| Logistic regression | 0.6259 | 0.6241 | 0.6244 / 0.0070 | 0.6274 |
+| Decision tree | 0.6888 | 0.6856 | 0.6856 / 0.0040 | 0.6937 |
+| Random forest (leaf 20) | 0.7410 | 0.7367 | 0.7367 / 0.0041 | 0.9346 |
+
+The previous in-sample column for the forest was 1.0000; the old random-fold cross-validation
+that justified adopting the forest (0.7928 / 0.6870 / 0.6247 in `reports/diagnostic_rf_cv.txt`)
+used item-level random folds and is superseded by this table. The forest still ranks first on
+unseen orders (0.7367 vs 0.6856 vs 0.6241 out-of-fold), so no model was swapped, but its edge
+over the decision tree is about 0.05, not 0.11.
+
+**Forest leaf size** (`scripts/diagnostic_rf_leaf.py`, same grouped OOF protocol, committed
+config except `min_samples_leaf`):
+
+| `min_samples_leaf` | Pooled OOF AUC | Fold mean / std | vs leaf 1 | Fitted size |
+|---|---|---|---|---|
+| 1 (fully grown, before) | 0.7233 | 0.7233 / 0.0047 | | 421.2 MB |
+| 5 | 0.7311 | 0.7310 / 0.0037 | +0.0077 | 193.3 MB (46%) |
+| 20 | 0.7367 | 0.7367 / 0.0041 | +0.0133 | 67.7 MB (16%) |
+
+The rule written beforehand was "adopt a larger leaf only if AUC is within 0.005 of the
+baseline and the size is materially smaller". Larger leaves were *better* by more than 0.005,
+not merely within it; I read the rule as a non-inferiority test (not worse by more than 0.005)
+and adopted **20** (`config.PREDICT_RF_MIN_SAMPLES_LEAF`): highest AUC, smallest model. 20 was
+the end of the grid, so a still larger leaf might do better; none was tried. The leaf was chosen
+on the same folds it is reported on, so the +0.013 is slightly optimistic.
+
+**Forward-looking check** (`scripts/diagnostic_temporal.py`): train on the earliest 80% of
+orders (88,294 items, 2016-09-15 to 2018-05-26, late rate 8.58%), test on the latest 20%
+(21,895 items, 2018-05-26 to 2018-08-29, late rate 5.20%). Fully grown forest, as in that run:
+
+| Features | Logistic regression | Decision tree | Random forest | RF - LR | RF - DT |
+|---|---|---|---|---|---|
+| All 12 | 0.3975 | 0.5049 | 0.5210 | +0.1235 | +0.0161 |
+| Without `order_month`, `day_of_week` | 0.4007 | 0.4188 | 0.4402 | +0.0396 | +0.0215 |
+
+Plainly: **none of the models has useful skill on future months.** Every AUC is near or below
+0.5 (below 0.5 means the ranking is, on average, inverted), the forest is nominally ahead of
+the linear model and the tree, but that is the smallest of three weak results and not
+evidence of a usable forecast. The calendar inputs (`order_month` is the strongest feature on
+unseen orders from the same period) do not carry forward. A caveat on the test period: its late
+rate is lower (5.2%), possibly partly because orders delayed beyond the data extract never
+appear as delivered; that was not verified here.
+
+**Recalibrated rules (late-risk only).** After the fix the scores sit on a different scale
+(median seller 0.34, not 0.11: with balanced class weights the forest's output is a ranking
+score, not a probability) and are far less dispersed at the low end, so the old cutoffs landed
+at the wrong percentiles. `avg_late_risk`, percentiles of the 2,970 sellers (all) and the 437
+Hidden Gems:
+
+| Percentile | All sellers, in-sample (before) | All sellers, out-of-fold (now) | Gems 25th / 50th / 75th / 90th before | Gems now |
+|---|---|---|---|---|
+| 10th | 0.0400 | 0.2250 | | |
+| 25th | 0.0633 | 0.2767 | 0.0492 | 0.2519 |
+| 50th | 0.1059 | 0.3391 | 0.0717 | 0.2996 |
+| 75th | 0.1780 | 0.4164 | 0.0994 | 0.3534 |
+| 90th | 0.2900 | 0.5013 | 0.1433 | 0.4079 |
+
+Seller-level correlation with the actual late rate drops to Pearson 0.339 (Spearman 0.428) over
+all sellers and 0.517 (0.583) for sellers with at least 5 items sold.
+
+| Rule | Intent (from its own text and sections 5/5b) | Old cutoff, its percentile now | New cutoff | Matches now |
+|---|---|---|---|---|
+| R01 Suspend (`>`) | **Percentile**: 75th, top quartile, all sellers | 0.178, 2.5th (fires on 97.5%) | **0.416** | 746 of 2,970 (25.1%) |
+| R03 Warn (`>`) | **Percentile**: 90th, all sellers | 0.29, 30.8th | **0.501** | 298 of 2,970 (10.0%) |
+| R06 Feature (`<`) | **Percentile**: median, all sellers | 0.106, 0.07th | **0.339** | 1,484 of 2,970 (50.0%) |
+| R10 Keep (`<=`) | **Percentile**: median, all sellers | 0.106, 0.07th | **0.339** | 1,484 of 2,970 (50.0%) |
+| R09 Promote (`<`) | **Percentile**: about the 25th, Hidden Gems only | 0.05, 0.0th (fires on 0 gems) | **0.252** | 111 of 437 (25.4%) |
+| R08 Promote (`<`) | **Fixed level**: CLAUDE.md's literal 0.3, gems only | 0.3, 50.8th among gems | 0.3 (unchanged) | 222 of 437 (50.8%) |
+| R02, R05, R11 | Actual late rate (model-independent) | | untouched | |
+
+R08 was kept because it fires on 50.8% of gems, neither 0% nor 100%, and 0.252 < 0.3 keeps R09
+a strict subset (the high-confidence tier) of R08. R07 only had its `because` text corrected:
+it said "top quartile" while 4.3 is about the median review; it now describes what it does
+(a high review, at least 4.3, held at scale, at least 83 items sold), threshold unchanged.
+
+**Recommendations fired per rule (2,970 sellers).**
+
+| Rule | Before (in-sample risk, old cutoffs) | Out-of-fold risk, OLD cutoffs | Out-of-fold risk, new cutoffs |
+|---|---|---|---|
+| R01 Suspend | 152 | 334 | 137 |
+| R02 Suspend | 5 | 5 | 6 |
+| R03 Warn | 188 | 1,712 | 219 |
+| R04 Warn | 58 | 4 | 69 |
+| R05 Warn | 5 | 7 | 37 |
+| R06 Feature | 130 | 1 | 137 |
+| R07 Feature | 47 | 78 | 37 |
+| R08 Promote | 306 | 222 | 106 |
+| R09 Promote | 106 | 0 | 104 |
+| R10 Keep | 63 | 0 | 170 |
+| R11 Keep | 621 | 223 | 713 |
+| R12 Keep (default) | 1,289 | 384 | 1,235 |
+
+By action (Keep / Promote / Feature / Warn / Suspend): 1,973 / 412 / 177 / 251 / 157 before;
+607 / 222 / 79 / 1,723 / 339 with the out-of-fold scores and the old cutoffs (the old cutoffs
+simply no longer fit the new scale); **2,118 / 210 / 174 / 325 / 143** after recalibration.
+521 sellers changed action from before to after: Keep to Warn 136, Promote to Keep 197, Warn to
+Keep 78, Suspend to Keep 28, Keep to Suspend 25, Suspend to Warn 19, Feature to Keep 14, Keep
+to Feature 11, Warn to Suspend 8, Promote to Warn 5.
+
+What changed and why, in plain terms. The Promote tier roughly halves (412 to 210, 197 sellers
+fall back to Keep): the in-sample risk of a gem was near zero because the forest had memorised
+the rarely-late sellers, so almost every gem cleared R08; the honest out-of-fold risk puts the
+literal 0.3 cutoff at the median of the gems (50.8%). R05 rises from 5 to 37 because sellers
+with a high actual late rate used to be caught first by R03 (their in-sample risk echoed that
+rate) and now reach R05. The late-risk rules fire in more plausible proportions (R01 25%, R03
+10%, R06 and R10 50% of all sellers by construction).

@@ -6,7 +6,7 @@ single **Technical details** expander at the bottom for anyone who wants the tab
 matrices and rules. Open that expander only when a question needs it.
 
 **About the figures.** Every number below was checked against the repo's pipeline outputs on
-2026-10-09. The dashboard computes its values live from those files, so **if the dashboard
+2026-10-13. The dashboard computes its values live from those files, so **if the dashboard
 and this script ever disagree, the dashboard wins**; re-run `python run_all.py` and update
 this file.
 
@@ -43,10 +43,11 @@ Each page: what to click, then two sentences to say. Roughly 45 seconds each.
 
 *Click:* point at the ranking score, then the bars, then "What if an input changes?".
 
-> "A random forest ranks a late order above an on-time one about 78% of the time, where 50% is
-> a coin flip. Its strongest signal is the month of purchase, then the seller's own past
-> lateness and the distance, which shows what the model leans on, not what causes lateness.
-> The small chart below shows which single nudge moves the predicted risk most."
+> "On orders it never saw, a random forest ranks a late order above an on-time one about 74%
+> of the time, where 50% is a coin flip. Its strongest signal is the month of purchase, then
+> the seller's own past lateness and the distance, which shows what the model leans on, not
+> what causes lateness. The small chart below shows which single nudge moves the predicted
+> risk most."
 
 ### 3. Choice: "Which established sellers are best overall?"
 
@@ -88,22 +89,26 @@ tables.
 ## The 12 questions a faculty member is most likely to ask
 
 **1. Why a random forest, when the original plan was a simple model?**
-The small models ranked late orders poorly: on the held-out test set the linear model scored
-0.63 and the decision tree 0.67, against 0.78 for the forest. We only switched after a
-five-fold cross-validation showed the forest's advantage was steady (0.7928, spread 0.0051).
-We kept the simpler models because you can read them, and that trade-off is shown on the
-Design page.
+On orders the models never saw, the linear model scores 0.63, the decision tree 0.69 and the
+forest 0.74 (0.7367 averaged over five order-grouped folds, spread 0.004). We first reported
+0.63 / 0.67 / 0.78, but that split put items from the same order on both sides of the
+train/test line and flattered the forest (it dropped from 0.78 to 0.73 once whole orders were
+held out; we then tuned its leaf size, which lifted it to 0.74 and cut the saved model from
+424 MB to 68 MB). Its lead over the decision tree is smaller than first thought, and the
+forest has little skill on future months (see question 11). We kept the simpler models
+because you can read them.
 
 **2. Why is the clickstream and the call data synthetic?**
 Olist contains orders, reviews, sellers and products, but no web events and no phone calls.
 We generated both with a fixed seed so the syllabus techniques (funnel analysis, sentiment
 analysis) can be demonstrated, and every place they appear carries a SYNTHETIC tag.
 
-**3. What does an AUC of 0.78 actually mean? Is that good?**
+**3. What does an AUC of 0.74 actually mean? Is that good?**
 Take one late order and one on-time order at random; the model gives the late one the higher
-risk score about 78% of the time. It is clearly better than a coin flip but far from perfect.
-At the default cut-off it flags about a quarter of the late orders (recall 0.25) and about
-half of its flags are right (precision 0.52), so it is a ranking aid, not an oracle.
+risk score about 74% of the time. It is clearly better than a coin flip but far from perfect.
+At the default cut-off it flags about half of the late orders (recall 0.52) but only about
+one flag in five is right (precision 0.20, where 7.9% of items are late), so it is a ranking
+aid, not an oracle.
 
 **4. Why are most hidden gems "low confidence"?**
 By definition a hidden gem has high quality but low popularity, and low popularity means few
@@ -124,16 +129,22 @@ left, mostly because of poor delivery. Only 12 of the 437 gems have reviews belo
 marketplace average, and none is below 4 stars.
 
 **5. Can I trust the late-risk score shown for a seller?**
-Treat it as a pipeline output, not a held-out measurement. The model was trained on roughly
-80% of the same order items it later scores, so a seller's average risk is likely optimistic.
-That is why the app takes every model-quality claim from the held-out test set and never
-turns the seller scores into claims about how many late orders we would catch.
+It is a model estimate, not a measured outcome, but it is no longer an in-sample echo. Every
+item's score is out-of-fold: produced by a model trained on folds that contain no item of that
+item's order. Before this fix the forest had memorised its training rows (its AUC on them was
+1.00) and a seller's average predicted risk correlated 0.91 with its own actual late rate; now
+the correlation is 0.34 (0.52 for sellers with 5 or more items sold). The score is also a
+ranking score, not a probability: with balanced class weights its typical value (about 0.34)
+is far above the 7.9% late rate, which is why the rules use percentiles of it. The app still
+takes model-quality claims from the held-out numbers and never turns seller scores into
+claims about how many late orders we would catch.
 
 **6. Why is "month of purchase" the strongest feature? Is that leakage?**
 The month an order was placed is known when the order is made, so it does not leak the
 delivery outcome, and no delivery-date column is used as a feature. It is probably picking up
 particular busy or disrupted periods in this dataset, so it should not be read as a repeatable
-seasonal rule.
+seasonal rule. The temporal check supports that: test on the latest 20% of orders and the
+month feature stops helping (question 11).
 
 **7. Aren't the AHP weights just opinion?**
 Yes, they are judgments, which is the nature of AHP; what AHP adds is a check that the
@@ -156,11 +167,19 @@ delivery.
 **10. Why keep the decision tree and the linear model if the forest is better?**
 Because an ensemble cannot show a printable rule path or one readable weight per input. They
 let you inspect the logic behind the numbers, at a cost in ranking quality that the Design
-page states openly. The forest also has a storage cost: the saved model is about 424 MB.
+page states openly. The forest also has a storage cost: the saved model is about 68 MB (it was 424 MB before its
+leaf size was tuned).
 
 **11. What are the main limits of this project?**
-The clickstream and call data are synthetic. The late-risk model ranks moderately well, not
-sharply. Hidden gems rest on few items sold. The app is a decision aid on historical data from
+The clickstream and call data are synthetic. The late-risk model ranks moderately well on
+unseen orders, not sharply, and it does not forecast the future: trained on the earliest 80%
+of orders and tested on the latest 20% (late May to August 2018, when only 5.2% of items were
+late against 8.6% before), all three models score about 0.4 to 0.5, i.e. no better than a coin
+flip (forest 0.52, tree 0.50, linear model 0.40; without the month and weekday inputs they
+fall to 0.44, 0.42 and 0.40). The forest's lead over the others survives only as the smallest
+of three weak results. (Orders delayed beyond the data extract may be missing from the end of
+the data, which could make that period look better than it was; this was not verified.)
+Hidden gems rest on few items sold. The app is a decision aid on historical data from
 one marketplace, and nothing here proves cause and effect. The speech analytics works from
 transcripts only, with no audio.
 
