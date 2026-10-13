@@ -237,7 +237,7 @@ def render() -> None:
     review = "n/a" if pd.isna(row["avg_review"]) else f"{row['avg_review']:.2f}"
     kpis([
         ("Items sold", f"{int(row['order_volume'])}", None),
-        ("Average review", review, "Average review score (1 to 5)."),
+        ("Average review", review, "Average review score (1 to 5), one review per order."),
         ("Late-delivery rate", f"{row['late_rate'] * 100:.1f}%",
          "Share of this seller's items that really were delivered late."),
     ])

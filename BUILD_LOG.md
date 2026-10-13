@@ -399,13 +399,56 @@ section 8.
 
 **Honest limits.** Shrinkage compresses scores, so the median quality line that defines the
 quadrants fell (0.716 to 0.644); the 17 sellers that entered the gem quadrant all came from
-Overlooked-Low-Quality and average only 3.81 raw review with few late deliveries. The
-order-level `avg_review_raw` differs from `SellerFacts.avg_review` (item-level, used by the
-rules and the Implementation page; mean gap 0.058, 749 sellers differ by more than 0.05),
-because `src/discovery.py` and the rules were out of scope. The k estimate depends on the
-pool, and a single k is a compromise between small and large sellers.
+Overlooked-Low-Quality (they average 4.24 per reviewed order, 5 of 17 below the marketplace
+mean of 4.14, 2.2% late; an earlier version of this entry said 3.81, which was the per-item
+mean and is superseded by Stage 5b). When this stage was first written `SellerFacts.avg_review`
+was still the per-item mean while Choice showed the per-order mean; Stage 5b below closes that.
+The k estimate depends on the pool, and a single k is a compromise between small and large
+sellers.
 
 **Environment.** scikit-learn is still blocked by Application Control, so only `src.ahp`,
 `src.discovery`, `src.expert` and `src.export_sql` were re-run, individually; `src.predict`
 and `run_all.py` were not run. `LatePredictions`, the models and the model reports are
 byte-identical.
+
+## Stage 5b — one definition of "average review" for Choice, Discovery, Implementation and the rules (not committed)
+
+**Problem.** `SellerFacts.avg_review` (the fact behind R01, R04, R07, R10 and the
+Implementation page) was the per-item mean, while Choice's `avg_review_raw` was the per-order
+mean (one review per order); 749 sellers differed by more than 0.05, because one unhappy review
+on a multi-item order counted once per item.
+
+**Change.** `src/discovery.py::build_seller_facts` now computes `avg_review` as the mean of one
+review per distinct order (`src.ahp.seller_order_table`) for ALL 2,970 sellers; the 5 sellers
+without a reviewed order keep NaN. Fact names are unchanged; items sold, late rate and
+predicted late risk are unchanged. Re-run individually: `discovery`, `expert`, `export_sql`
+(sklearn is still blocked; `predict` and `run_all.py` were not run). `discovery_quadrants.csv`
+and `ahp_ranking.csv` came out byte-identical (437 gems, same quadrants); `SellerFacts`, the
+recommendations and their exports changed.
+
+**Rules reading `avg_review`** (intent from each rule's `because` text and the docs):
+R01 and R04 (`< 3.5`) are fixed-level (the cutoff is the stated 3.5; its percentile moved
+12.85th to 11.60th, still inside the documented 10th to 25th band) and were left; R07
+(`>= 4.3`) is fixed-level in practice (the 51st percentile, 51.5th to 50.7th; its text says
+"top quartile", a pre-existing mismatch that is flagged, not changed) and was left; R10
+(`>= 4.27`) is percentile-intent (median) and was recalibrated to the new median, **4.28**.
+Late-risk and `ahp_score` thresholds untouched. Fired counts before / after the fact change /
+after R10: R01 165 / 152 / 152, R02 2 / 5 / 5, R03 181 / 188 / 188, R04 83 / 58 / 58, R05
+5 / 5 / 5, R06 130 / 130 / 130, R07 43 / 47 / 47, R08 306 / 306 / 306, R09 106 / 106 / 106,
+R10 63 / 67 / 63, R11 601 / 617 / 621, R12 1,285 / 1,289 / 1,289. Actions (Keep / Promote /
+Feature / Warn / Suspend) 1,949 / 412 / 173 / 269 / 167 to 1,973 / 412 / 177 / 251 / 157; 77
+sellers changed action (Warn to Keep 32, Suspend to Keep 9, Suspend to Warn 9, Keep to Feature
+8, Keep to Warn 7, Keep to Suspend 6, Feature to Keep 4, Warn to Suspend 2).
+
+**Read-only gem diagnostic** (gem definition untouched). Per-order review vs the marketplace
+mean 4.14: 12 of 437 gems (2.7%) are below it, none below 4.0 (minimum 4.07), mean 4.59, late
+rate 1.4%. The 17 entrants average 4.24 (5 below the mean) with 2.2% late; the 58 that left
+average 4.43 with 9.9% late. Below the 5% bar, so no extra caveat sentence was added to the
+Discovery page or the demo script. Full table: `docs/knowledge_engineering.md` section 8b.
+
+**Correction.** Stage 5 reported that the 17 entrants "average only 3.81 raw review". That
+figure used the per-item mean; per reviewed order it is 4.24. Stage 5's docs and the demo
+script were corrected.
+
+**Gates.** See the final report of this change for ruff, mypy and pytest counts and the
+hash comparison.

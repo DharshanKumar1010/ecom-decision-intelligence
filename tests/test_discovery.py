@@ -144,6 +144,7 @@ def test_build_seller_facts_marks_missing_ahp_score_and_hidden_gem_explicitly() 
     fact = pd.DataFrame(
         {
             "item_key": ["i1", "i2", "i3"],
+            "order_id": ["o1", "o2", "o3"],
             "seller_id": ["S1", "S1", "S2"],
             "review_score": [5.0, 4.0, 3.0],
             "is_late": [0, 1, 0],

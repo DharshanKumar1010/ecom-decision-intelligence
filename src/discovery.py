@@ -22,7 +22,13 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from src.ahp import build_seller_criteria, compute_weights, normalize_criteria, score_sellers
+from src.ahp import (
+    build_seller_criteria,
+    compute_weights,
+    normalize_criteria,
+    score_sellers,
+    seller_order_table,
+)
 from src.config import (
     AHP_CRITERIA,
     AHP_CRITERION_DIRECTION,
@@ -175,23 +181,29 @@ def build_seller_facts(
         quadrant_df: output of `compute_quadrants` (AHP-eligible sellers
             only, i.e. >= `config.DISCOVERY_MIN_ORDERS` orders).
         late_predictions: `LatePredictions.parquet` (`item_key`, `late_risk`).
-        fact: FactOrderItems (must contain item_key, seller_id,
+        fact: FactOrderItems (must contain item_key, order_id, seller_id,
             review_score, is_late).
 
     Returns:
         DataFrame with columns `seller_id`, `ahp_score`, `avg_late_risk`,
-        `avg_review`, `order_volume`, `late_rate`, `is_hidden_gem`.
+        `avg_review` (mean of one review per distinct order, NaN if the seller has
+        no reviewed order), `order_volume` (items sold), `late_rate`, `is_hidden_gem`.
     """
     item_level = fact[["item_key", "seller_id", "review_score", "is_late"]].merge(
         late_predictions, on="item_key", how="left"
     )
     seller_stats = item_level.groupby("seller_id").agg(
         avg_late_risk=("late_risk", "mean"),
-        avg_review=("review_score", "mean"),
         late_rate=("is_late", "mean"),
         order_volume=("item_key", "count"),
     )
-    seller_stats = seller_stats.reset_index()
+    # A review belongs to an ORDER and repeats on each of its items, so the seller's average
+    # review is the mean of one review per distinct order (the same `avg_review_raw` Choice
+    # shows), for ALL sellers. A seller with no reviewed order keeps NaN.
+    per_order_review = (
+        seller_order_table(fact).groupby("seller_id")["review"].mean().rename("avg_review")
+    )
+    seller_stats = seller_stats.join(per_order_review).reset_index()
 
     merged = seller_stats.merge(
         quadrant_df[["seller_id", "ahp_score", "quadrant"]], on="seller_id", how="left"

@@ -137,7 +137,7 @@
   priority: 50
   if:
     - {fact: avg_late_risk, op: "<=", value: 0.106}
-    - {fact: avg_review, op: ">=", value: 4.27}
+    - {fact: avg_review, op: ">=", value: 4.28}
     - {fact: order_volume, op: ">=", value: 5}
   then: Keep
   because: "At-or-below-median predicted risk (recalibrated to RandomForest's real median), at-or-above-median reviews, and enough orders to be a real track record — no reason to change status."

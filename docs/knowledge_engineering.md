@@ -287,7 +287,7 @@ to the 5-order-eligible pool: 10th 0.604, 25th 0.669, 50th 0.716, 75th
 | R03 Warn | `avg_late_risk > 0.55` (~90th pct) | A single, wide risk-only caution signal, deliberately set higher than R01's combined-condition threshold since it fires alone. | 226 sellers |
 | R04 Warn | `avg_review < 3.5` AND `order_volume >= 5` | Same review cutoff as R01 (10th-25th pct band) without the risk condition, gated on order_volume >= 5 so it reflects a pattern, not one bad review. | 177 sellers |
 | R05 Warn | `late_rate > 0.25` (90th pct) AND `order_volume >= 5` | A softer, single-condition version of R02's empirical-lateness signal. | 105 sellers |
-| R10 Keep | `avg_late_risk <= 0.503` AND `avg_review >= 4.27` (both median) AND `order_volume >= 5` | At-or-better-than-median on both risk and reviews, with a real order history — no signal to act on. | 446 sellers |
+| R10 Keep | `avg_late_risk <= 0.503` AND `avg_review >= 4.27` (both median; the review cutoff is now 4.28, section 8b) AND `order_volume >= 5` | At-or-better-than-median on both risk and reviews, with a real order history — no signal to act on. | 446 sellers |
 | R11 Keep | `ahp_score >= 0.549` (10th pct; was 0.604 before the Stage 5 shrinkage, section 8) AND `late_rate <= 0.10` (75th pct) | Excludes only the bottom decile of AHP quality and the worst quartile of empirical lateness — a wide "no red flags" net. | 1,264 sellers |
 | R12 (default) | none (`if: []`) | Every seller must get a recommendation (CLAUDE.md section 7.5); catches sellers with too little data to trigger any of the above (frequently order_volume < 5, so no `ahp_score`). | 1,228 sellers (41.4% of all sellers) |
 
@@ -338,11 +338,10 @@ has. The first version of this stage (item level, k = 11 and 14) did exactly tha
 - eligibility is unchanged and still defined by **items sold**: >= 5 for the Discovery pool,
   >= 30 for Choice, so the pools and the quadrant rules keep their definition.
 
-`SellerFacts.avg_review` (used by R01/R04/R07/R10 and the Implementation page) is still the
-item-level raw mean, because `src/discovery.py` and the rules were out of scope. Across all
-sellers it differs from the order-level `avg_review_raw` by 0.058 on average (749 sellers
-differ by more than 0.05; the largest gaps are tiny sellers), so the Choice table's "Avg
-review" is per reviewed order while an Implementation fact card is per item.
+`SellerFacts.avg_review` (used by R01/R04/R07/R10 and the Implementation page) was at first
+still the item-level raw mean (it differed from the order-level `avg_review_raw` by 0.058 on
+average, 749 sellers by more than 0.05). That inconsistency is closed in Stage 5b (section 8b
+below): the expert fact is now the same per-order mean Choice shows.
 
 **How k is chosen: method-of-moments empirical Bayes, from the data.** For a criterion with
 within-seller variance `s2` (spread of one order's value around its seller's own true value)
@@ -409,11 +408,12 @@ the top of the gem list (1 of 10 instead of 6). Low/normal confidence for the wh
 unchanged (818 / 1,046) because it depends only on raw items sold.
 
 **A side effect to know about.** Shrinkage compresses scores toward the middle, so the median
-quality line that defines the quadrants fell from 0.716 to 0.644. Of the 17 sellers that
-entered the Hidden Gem quadrant, all came from Overlooked-Low-Quality, and they are not
-stars: they average 3.81 raw review (the marketplace is 4.13) with almost no late
-deliveries (2.2%); they clear the lowered median on delivery record. The 58 that left were
-mostly small sellers with very high raw reviews (4.51 mean).
+quality line that defines the quadrants fell from 0.716 to 0.644. All 17 sellers that
+entered the Hidden Gem quadrant came from Overlooked-Low-Quality. (An earlier version of this
+paragraph said they average 3.81 stars; that figure used the per-ITEM mean, which a single bad
+review on a multi-item order drags down. Measured per reviewed order, as in section 8b, they
+average 4.24, with 5 of 17 below the marketplace mean of 4.14, and 2.2% late deliveries.) The
+58 that left averaged 4.43 per order and 9.9% late.
 
 `ahp_score` percentiles over the 1,864 scored sellers (`SellerFacts`):
 
@@ -446,7 +446,8 @@ deliberately left as they were and will be recalibrated separately.
 between 0% and 100%, so the drift test passes, and R09 still sits at about the 25th
 percentile of gem late risk (0.0492).
 
-**Recommendations fired per rule (all 2,970 sellers).**
+**Recommendations fired per rule (all 2,970 sellers; the Stage 5 state, before the Stage 5b
+per-order `avg_review` fact, whose counts are in section 8b).**
 
 | Rule | No shrinkage | Item level | Order level |
 |---|---|---|---|
@@ -470,3 +471,74 @@ for those 3. As before, Feature to Promote is the main flow (tiny gems with perf
 averages used to reach the old R06 cutoff and were featured ahead of Promote), Keep to
 Feature is shrinkage ranking steady high-volume sellers higher, and Promote to Keep is
 mostly sellers that left the gem quadrant (58 left).
+
+## 8b. One definition of "average review" (Stage 5b)
+
+**Change.** `SellerFacts.avg_review`, the fact behind R01, R04, R07, R10 and the Implementation
+page, is now the mean of one review per distinct order, computed for ALL 2,970 sellers from the
+fact table (`build_seller_facts` uses `seller_order_table`; sellers with no reviewed order keep
+NaN, as before: 5 sellers). It is the same number Choice shows as `avg_review_raw`, so Choice,
+Discovery, Implementation and the rules share one definition. Items sold, late rate and
+predicted late risk are unchanged. Quadrants, `ahp_ranking.csv` and the gem set are byte-identical
+before and after (437 gems); only `SellerFacts`, the recommendations and their exports change.
+The per-order mean differs from the per-item mean by 0.058 on average (749 sellers by more than
+0.05), because one unhappy review on a multi-item order used to count once per item.
+
+**Distribution of the fact** (2,965 sellers with a review): 10th / 25th / 50th / 75th / 90th
+percentile were 3.20 / 3.90 / 4.27 / 4.70 / 5.00 per item and are 3.33 / 3.97 / 4.28 / 4.67 /
+5.00 per order.
+
+**Rules reading `avg_review`.** Intent is taken from each rule's own `because` text and
+section 6; only percentile-intent rules are recalibrated.
+
+| Rule | Condition | Intent | Percentile of the cutoff before / after | Decision |
+|---|---|---|---|---|
+| R01 Suspend | `avg_review < 3.5` | **Fixed level** (3.5 is the stated cutoff, CLAUDE.md's example rule re-thresholded; documented only as inside the 10th to 25th percentile band) | 12.85th / 11.60th | Left. Still inside the documented band |
+| R04 Warn | `avg_review < 3.5` | **Fixed level**, "same review cutoff as R01" | 12.85th / 11.60th | Left |
+| R07 Feature | `avg_review >= 4.3` | **Fixed level** in practice: the justification (section 6) picks 4.3 just above the overall median to isolate sellers sustaining quality at scale; its `because` text says "top quartile", but 4.3 was never near the 75th percentile (about the 51st). That mismatch pre-dates this change | 51.5th / 50.7th | Left (the fact change moved it by under 1 point); the text/number mismatch is flagged, not silently changed |
+| R10 Keep | `avg_review >= 4.27` | **Percentile** (median: "at-or-above-median reviews") | 49.95th / 48.97th | Recalibrated to the new median: **4.28** (49.85th percentile below the cutoff; the exact median is 4.28125) |
+
+`avg_late_risk` and `ahp_score` thresholds were not touched.
+
+**Recommendations fired per rule (2,970 sellers).**
+
+| Rule | Before the fact change | After the fact change (old thresholds) | After R10 recalibration |
+|---|---|---|---|
+| R01 Suspend | 165 | 152 | 152 |
+| R02 Suspend | 2 | 5 | 5 |
+| R03 Warn | 181 | 188 | 188 |
+| R04 Warn | 83 | 58 | 58 |
+| R05 Warn | 5 | 5 | 5 |
+| R06 Feature | 130 | 130 | 130 |
+| R07 Feature | 43 | 47 | 47 |
+| R08 Promote | 306 | 306 | 306 |
+| R09 Promote | 106 | 106 | 106 |
+| R10 Keep | 63 | 67 | 63 |
+| R11 Keep | 601 | 617 | 621 |
+| R12 Keep (default) | 1,285 | 1,289 | 1,289 |
+
+By action (Keep / Promote / Feature / Warn / Suspend): 1,949 / 412 / 173 / 269 / 167 before and
+1,973 / 412 / 177 / 251 / 157 after; the R10 recalibration changes which Keep rule fires, not
+any action. 77 sellers changed action (Warn to Keep 32, Suspend to Keep 9, Suspend to Warn 9,
+Keep to Feature 8, Keep to Warn 7, Keep to Suspend 6, Feature to Keep 4, Warn to Suspend 2):
+sellers whose bad record came from one multi-item order stop being penalised several times
+over. R02 rises from 2 to 5 only because three sellers no longer fire the higher-priority R01
+and fall through to R02.
+
+**Do hidden gems really have good reviews? (read-only diagnostic; the gem definition is
+unchanged).** Marketplace mean review per order: 4.14. Per-order average review and item-level
+late rate:
+
+| Group | Sellers | Mean / median review | Below marketplace mean | Late rate mean / median / 90th pct |
+|---|---|---|---|---|
+| All gems | 437 | 4.59 / 4.60 | 12 (2.7%) | 1.4% / 0.0% / 7.1% |
+| Stayed gems | 420 | 4.61 / 4.62 | 7 (1.7%) | 1.4% / 0.0% / 7.1% |
+| Entered the gem group (17) | 17 | 4.24 / 4.25 | 5 (29.4%) | 2.2% / 0.0% / 2.5% |
+| Left the gem group (58) | 58 | 4.43 / 4.50 | 10 (17.2%) | 9.9% / 9.5% / 20.0% |
+| All 1,864 AHP-eligible sellers | 1,864 | 4.17 | 753 (40.4%) | 8.1% mean |
+
+Only 2.7% of gems (below the 5% bar) have a review below the marketplace mean, and none is
+below 4.0 (lowest 4.07); the sellers that left the group were mainly those with poor delivery
+(9.9% late against 1.4%). So no extra caveat was added to the Discovery page or the demo
+script. The 17 entrants are the one place worth knowing: 5 of them sit just below the
+marketplace mean on reviews and qualify on a near-perfect delivery record.

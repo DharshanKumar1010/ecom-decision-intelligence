@@ -118,8 +118,10 @@ orders for on-time rate). Before that, items sold and quality correlated at -0.1
 gem group (more sales, lower score), afterwards at +0.23; of the top 10 gems, 10 had a perfect
 5.0 average before and 1 does now. Second, the page still lists the 44 Stronger-evidence gems
 first and puts the rest under Early signal. One side effect: shrinkage lowers the quality
-median that splits the quadrants, so 17 sellers entered the gem group (mostly small sellers
-with few late deliveries but only about 3.8-star reviews) while 58 left.
+median that splits the quadrants, so 17 sellers entered the gem group (small sellers with
+almost no late deliveries and decent but not outstanding reviews, about 4.2 stars) while 58
+left, mostly because of poor delivery. Only 12 of the 437 gems have reviews below the
+marketplace average, and none is below 4 stars.
 
 **5. Can I trust the late-risk score shown for a seller?**
 Treat it as a pipeline output, not a held-out measurement. The model was trained on roughly
