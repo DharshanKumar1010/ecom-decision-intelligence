@@ -75,6 +75,10 @@ The old hand-imported `DimCustomer` and `DimProduct` were replaced.
   is forward-looking; Implementation opens on a seller with 5+ reviewed orders and shows reviewed and delivered orders;
   tier names read Stronger evidence / Early signal everywhere; `docs/powerbi_measures.md` added. No output, model or table
   changed (hash-compared). Details: `docs/archive/FINAL_POLISH_REPORT.md`.
+- *Stage 9, evidence in orders.* Items of one order are not independent, so every Warn and Suspend rule now also needs 3
+  delivered orders (R01, R02, R03, R05) and/or 3 reviewed orders (R01, R04), read from two new SellerFacts columns
+  (`n_orders`, `n_reviewed`); R01's threshold re-derived (0.412 to 0.413), R03's unchanged. 8 sellers changed action; models,
+  quadrants, AHP and `sql/schema.sql` byte-identical; SQL reloaded. See `docs/knowledge_engineering.md` section 11.
 
 ## Corrections that mattered
 

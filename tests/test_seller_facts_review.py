@@ -73,3 +73,51 @@ def test_r10_review_cutoff_stays_at_the_median_its_text_promises() -> None:
     reviews = pd.read_parquet(_FACTS_PATH)["avg_review"].dropna()
     share_below = float((reviews < cutoff).mean())
     assert abs(share_below - 0.5) < 0.01, f"R10 cutoff {cutoff} is the {share_below:.1%} percentile"
+
+
+def _evidence_fixture() -> pd.DataFrame:
+    # Seller A: one order with 3 items and one review.
+    # Seller B: 4 items in 2 orders, only one of them reviewed.
+    # Seller C: 2 orders, none reviewed.
+    return pd.DataFrame(
+        {
+            "item_key": list("abcdefghi"),
+            "order_id": ["o1", "o1", "o1", "o2", "o2", "o3", "o3", "o4", "o5"],
+            "seller_id": ["A", "A", "A", "B", "B", "B", "B", "C", "C"],
+            "review_score": [4.0, 4.0, 4.0, 5.0, 5.0, np.nan, np.nan, np.nan, np.nan],
+            "is_late": [0] * 9,
+        }
+    )
+
+
+def test_build_seller_facts_counts_distinct_orders_and_reviewed_orders() -> None:
+    fact = _evidence_fixture()
+    late = pd.DataFrame({"item_key": fact["item_key"], "late_risk": 0.1})
+    quadrants = pd.DataFrame(columns=["seller_id", "ahp_score", "quadrant", "confidence"])
+    facts = build_seller_facts(quadrants, late, fact).set_index("seller_id")
+    assert facts.loc["A", ["order_volume", "n_orders", "n_reviewed"]].tolist() == [3, 1, 1]
+    assert facts.loc["B", ["order_volume", "n_orders", "n_reviewed"]].tolist() == [4, 2, 1]
+    assert facts.loc["C", ["order_volume", "n_orders", "n_reviewed"]].tolist() == [2, 2, 0]
+    assert facts[["n_orders", "n_reviewed"]].dtypes.astype(str).tolist() == ["int64", "int64"]
+    # existing columns keep their names and order; the two new ones are appended
+    assert list(facts.reset_index().columns) == [
+        "seller_id", "ahp_score", "avg_late_risk", "avg_review", "order_volume", "late_rate",
+        "is_hidden_gem", "n_orders", "n_reviewed",
+    ]
+
+
+def test_real_evidence_counts_equal_the_seller_order_table_for_every_seller() -> None:
+    if not (_FACT_PATH.exists() and _FACTS_PATH.exists()):
+        pytest.skip("pipeline outputs not generated; run the pipeline first")
+    fact = pd.read_parquet(_FACT_PATH)
+    facts = pd.read_parquet(_FACTS_PATH).set_index("seller_id")
+    table = seller_order_table(fact).groupby("seller_id")
+    expected_orders = table["order_id"].size()
+    expected_reviewed = table["review"].count()
+    assert facts[["n_orders", "n_reviewed"]].notna().all().all()
+    assert (facts["n_orders"].sort_index() == expected_orders.sort_index()).all()
+    assert (facts["n_reviewed"].sort_index() == expected_reviewed.sort_index()).all()
+    assert (facts["n_orders"] >= 1).all()
+    assert (facts["n_reviewed"] <= facts["n_orders"]).all()
+    assert (facts["n_orders"] <= facts["order_volume"]).all()
+    assert facts["n_orders"].sum() == len(seller_order_table(fact))

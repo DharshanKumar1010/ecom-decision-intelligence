@@ -44,7 +44,7 @@ def test_real_ruleset_has_at_least_twelve_rules_covering_all_actions(
 def test_suspend_fires_for_high_risk_poorly_reviewed_seller(engine: InferenceEngine) -> None:
     facts = WorkingMemory(
         seller_id="bad", ahp_score=None, avg_late_risk=0.6, avg_review=2.5,
-        order_volume=20, late_rate=0.2, is_hidden_gem=False,
+        order_volume=20, late_rate=0.2, is_hidden_gem=False, n_orders=18, n_reviewed=17,
     ).as_facts()
     result = engine.run(facts)
     assert result.fired_rule.action == "Suspend"
@@ -53,7 +53,7 @@ def test_suspend_fires_for_high_risk_poorly_reviewed_seller(engine: InferenceEng
 def test_warn_fires_for_elevated_risk_seller(engine: InferenceEngine) -> None:
     facts = WorkingMemory(
         seller_id="borderline", ahp_score=0.65, avg_late_risk=0.56, avg_review=4.0,
-        order_volume=20, late_rate=0.05, is_hidden_gem=False,
+        order_volume=20, late_rate=0.05, is_hidden_gem=False, n_orders=18, n_reviewed=17,
     ).as_facts()
     result = engine.run(facts)
     assert result.fired_rule.action == "Warn"
@@ -112,10 +112,26 @@ def test_keep_fires_via_default_rule_for_sparse_seller(engine: InferenceEngine) 
     assert result.fired_rule.id == "R12"
 
 
+def _gate(rule: Rule, fact: str) -> float | None:
+    """The `<fact> >= N` gate of a rule, or None if it has none."""
+    gates = [c.value for c in rule.conditions if c.fact == fact and c.op == ">="]
+    return max(gates) if gates else None
+
+
 def _minimum_items_sold(rule: Rule) -> float | None:
     """The `order_volume >= N` gate of a rule, or None if it has none."""
-    gates = [c.value for c in rule.conditions if c.fact == "order_volume" and c.op == ">="]
-    return max(gates) if gates else None
+    return _gate(rule, "order_volume")
+
+
+# The independent evidence (in distinct orders) each Warn/Suspend rule needs, in addition to its
+# items-sold gate (docs/knowledge_engineering.md section 11).
+_ORDER_GATES: dict[str, dict[str, float]] = {
+    "R01": {"n_orders": 3, "n_reviewed": 3},
+    "R02": {"n_orders": 3},
+    "R03": {"n_orders": 3},
+    "R04": {"n_reviewed": 3},
+    "R05": {"n_orders": 3},
+}
 
 
 def test_every_warn_and_suspend_rule_requires_minimum_evidence(engine: InferenceEngine) -> None:
@@ -126,14 +142,59 @@ def test_every_warn_and_suspend_rule_requires_minimum_evidence(engine: Inference
             assert gate is not None and gate >= 5, f"{rule.id} ({rule.action}) has no gate >= 5"
 
 
+def test_every_warn_and_suspend_rule_carries_its_order_gates(engine: InferenceEngine) -> None:
+    """Items sold are not independent: each Warn/Suspend rule also needs distinct orders."""
+    by_id = {rule.id: rule for rule in engine.knowledge_base.rules}
+    warn_suspend = {r.id for r in by_id.values() if r.action in ("Warn", "Suspend")}
+    assert warn_suspend == set(_ORDER_GATES)
+    for rule_id, gates in _ORDER_GATES.items():
+        for fact in ("n_orders", "n_reviewed"):
+            assert _gate(by_id[rule_id], fact) == gates.get(fact), (rule_id, fact)
+        assert _minimum_items_sold(by_id[rule_id]) is not None, rule_id
+
+
+_WORST = {
+    "ahp_score": None, "avg_late_risk": 0.99, "avg_review": 1.0, "order_volume": 50,
+    "late_rate": 0.9, "is_hidden_gem": False,
+}
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "facts", "n_orders", "n_reviewed", "expected"),
+    [
+        # R01 needs 3 delivered AND 3 reviewed orders; without reviews R03 (orders only) is next.
+        ("R01", {"late_rate": 0.0}, 3, 3, "R01"),
+        ("R01", {"late_rate": 0.0}, 3, 2, "R03"),
+        ("R01", {"late_rate": 0.0}, 2, 2, "R12"),
+        ("R02", {"avg_late_risk": 0.0, "avg_review": 5.0, "late_rate": 0.5}, 3, 3, "R02"),
+        ("R02", {"avg_late_risk": 0.0, "avg_review": 5.0, "late_rate": 0.5}, 2, 2, "R10"),
+        ("R03", {"avg_review": 5.0, "late_rate": 0.0}, 3, 3, "R03"),
+        ("R03", {"avg_review": 5.0, "late_rate": 0.0}, 2, 2, "R12"),
+        ("R04", {"avg_late_risk": 0.0, "late_rate": 0.0}, 3, 3, "R04"),
+        ("R04", {"avg_late_risk": 0.0, "late_rate": 0.0}, 3, 2, "R12"),
+        ("R05", {"avg_late_risk": 0.0, "avg_review": 5.0, "late_rate": 0.3, "order_volume": 8},
+         3, 3, "R05"),
+        ("R05", {"avg_late_risk": 0.0, "avg_review": 5.0, "late_rate": 0.3, "order_volume": 8},
+         2, 2, "R10"),
+    ],
+)
+def test_order_gates_switch_each_rule_at_three_orders(
+    engine: InferenceEngine, rule_id: str, facts: dict[str, object], n_orders: int,
+    n_reviewed: int, expected: str,
+) -> None:
+    """Each rule fires with exactly 3 delivered/reviewed orders and not with 2 (same items sold)."""
+    full = {**_WORST, **facts, "n_orders": n_orders, "n_reviewed": n_reviewed}
+    assert engine.run(full).fired_rule.id == expected, (rule_id, n_orders, n_reviewed)
+
+
 def test_risk_only_rules_do_not_fire_for_tiny_sellers(engine: InferenceEngine) -> None:
     high_risk_tiny = WorkingMemory(
         seller_id="tiny", ahp_score=None, avg_late_risk=0.99, avg_review=1.0,
-        order_volume=4, late_rate=1.0, is_hidden_gem=False,
+        order_volume=4, late_rate=1.0, is_hidden_gem=False, n_orders=4, n_reviewed=4,
     ).as_facts()
     result = engine.run(high_risk_tiny)
     assert result.fired_rule.id == "R12"
-    just_enough = {**high_risk_tiny, "order_volume": 5}
+    just_enough = {**high_risk_tiny, "order_volume": 5, "n_orders": 5, "n_reviewed": 5}
     assert engine.run(just_enough).fired_rule.action in ("Suspend", "Warn")
 
 
@@ -152,10 +213,27 @@ def test_no_warn_or_suspend_recommendation_for_a_seller_below_five_items() -> No
     ][["seller_id", "order_volume", "action", "rule_id"]].to_string()
 
 
+def test_no_warn_or_suspend_recommendation_without_independent_orders() -> None:
+    facts_path = PROCESSED_DATA_DIR / "SellerFacts.parquet"
+    recs_path = REPORTS_DIR / "seller_recommendations.csv"
+    if not facts_path.exists() or not recs_path.exists():
+        pytest.skip("pipeline outputs not available; run run_all.py first")
+    facts = pd.read_parquet(facts_path)[["seller_id", "n_orders", "n_reviewed"]]
+    recs = pd.read_csv(recs_path).merge(facts, on="seller_id", validate="1:1")
+    assert len(recs) == len(facts)
+    thin = recs[recs["n_orders"] < 3]
+    assert len(thin) > 0, "no seller below 3 delivered orders; the check would prove nothing"
+    assert not thin["action"].isin(["Warn", "Suspend"]).any()
+    needs_reviews = recs[recs["rule_id"].isin(["R01", "R04"])]
+    assert len(needs_reviews) > 0
+    assert (needs_reviews["n_reviewed"] >= 3).all()
+    assert (recs[recs["action"].isin(["Warn", "Suspend"])]["n_orders"] >= 3).all()
+
+
 def test_explanation_facility_renders_rationale_and_trace(engine: InferenceEngine) -> None:
     facts = WorkingMemory(
         seller_id="bad", ahp_score=None, avg_late_risk=0.6, avg_review=2.5,
-        order_volume=20, late_rate=0.2, is_hidden_gem=False,
+        order_volume=20, late_rate=0.2, is_hidden_gem=False, n_orders=18, n_reviewed=17,
     ).as_facts()
     result = engine.run(facts)
 
@@ -275,47 +353,48 @@ def _rule_threshold(rule: Rule, fact: str) -> float:
 
 
 def _reference_population(seller_facts: pd.DataFrame, rule: Rule) -> pd.DataFrame:
-    """The sellers a rule can apply to: those meeting its own items-sold gate, else everyone.
+    """The sellers a rule can apply to: those meeting every one of its evidence gates (items
+    sold, delivered orders, reviewed orders), and for the Promote rules the Hidden Gems.
 
-    R01 and R03 (risk rules with a gate) are percentile-calibrated on this group, not on all
+    R01 and R03 (risk rules with gates) are percentile-calibrated on this group, not on all
     sellers; R06 and R10 keep their all-seller median, R06 because it has no gate and R10 by
-    decision (see docs/knowledge_engineering.md section 10).
+    decision (see docs/knowledge_engineering.md sections 10 and 11). The review and
+    late-rate conditions are NOT part of the population: they are what the rule tests.
     """
-    gate = _minimum_items_sold(rule)
-    if gate is None:
-        return seller_facts
-    return seller_facts[seller_facts["order_volume"] >= gate]
+    population = seller_facts
+    for fact in ("order_volume", "n_orders", "n_reviewed"):
+        gate = _gate(rule, fact)
+        if gate is not None:
+            population = population[population[fact] >= gate]
+    if any(c.fact == "is_hidden_gem" and c.value is True for c in rule.conditions):
+        population = population[population["is_hidden_gem"]]
+    return population
 
 
 def test_percentile_calibrated_rules_remain_discriminating_in_their_reference_population(
     engine: InferenceEngine,
 ) -> None:
-    """Drift guard for the rules calibrated against a PERCENTILE of avg_late_risk or late_rate
-    (docs/knowledge_engineering.md sections 5b and 10 say which rules are percentile-intent;
-    R02's 40 % late_rate is a fixed severity level, so a near-0 % fire rate is correct there).
+    """Drift guard for every rule except the default R12: each fires on some, but not all,
+    of the sellers it can apply to (`_reference_population`).
 
-    Each rule is measured over the sellers it can apply to (`_reference_population`): R01 and
-    R03 over sellers with at least 5 items sold, the rest over all sellers (R05 and R10 over
-    their own gate). A rate of 0 % or 100 % means the threshold drifted away from the
-    distribution it was set against. Uses the REAL current data, not a fixture.
+    The percentile-intent rules (docs/knowledge_engineering.md sections 5b, 10 and 11) are
+    measured over the sellers meeting their own evidence gates (R01, R03, R05, R10), the
+    others over all sellers, the Promote rules over Hidden Gems. R02's 40 % late_rate is a
+    fixed severity level, so a near-0 % fire rate is correct there, but never exactly 0 %.
+    A rate of 0 % or 100 % means the threshold drifted away from the distribution it was set
+    against. Uses the REAL current data, not a fixture.
     """
+    from src.expert import _facts_from_row
+
     seller_facts = _seller_facts()
     rules_by_id = {rule.id: rule for rule in engine.knowledge_base.rules}
-    for rule_id in ("R01", "R03", "R05", "R06", "R10", "R11"):
+    # Every rule except the default R12 (which matches everyone by design).
+    for rule_id in sorted(set(rules_by_id) - {"R12"}):
         rule = rules_by_id[rule_id]
         population = _reference_population(seller_facts, rule)
         assert len(population) > 0, rule_id
         match_rate = population.apply(
-            lambda row, r=rule: r.matches(
-                {
-                    "ahp_score": None if pd.isna(row["ahp_score"]) else row["ahp_score"],
-                    "avg_late_risk": row["avg_late_risk"],
-                    "avg_review": None if pd.isna(row["avg_review"]) else row["avg_review"],
-                    "order_volume": row["order_volume"],
-                    "late_rate": row["late_rate"],
-                }
-            ),
-            axis=1,
+            lambda row, r=rule: r.matches(_facts_from_row(row)), axis=1
         ).mean()
         assert 0.0 < match_rate < 1.0, (
             f"{rule_id} fires on {match_rate:.1%} of its {len(population):,} reference sellers -- "
@@ -328,7 +407,7 @@ def test_percentile_calibrated_rules_remain_discriminating_in_their_reference_po
 def test_r01_and_r03_thresholds_sit_at_their_percentile_of_sellers_with_five_items(
     engine: InferenceEngine, rule_id: str, intended_percentile: float
 ) -> None:
-    """R01 is 'top quartile' and R03 'top 10%' of the sellers they apply to (items sold >= 5)."""
+    """R01 is 'top quartile' and R03 'top 10%' of the sellers they apply to (all evidence gates)."""
     seller_facts = _seller_facts()
     rule = next(r for r in engine.knowledge_base.rules if r.id == rule_id)
     threshold = _rule_threshold(rule, "avg_late_risk")
@@ -336,7 +415,7 @@ def test_r01_and_r03_thresholds_sit_at_their_percentile_of_sellers_with_five_ite
     share_at_or_below = float((eligible <= threshold).mean())
     assert abs(share_at_or_below - intended_percentile) < 0.01, (
         f"{rule_id} threshold {threshold} is the {share_at_or_below:.1%} percentile of "
-        f"{len(eligible):,} sellers with >= 5 items sold, not {intended_percentile:.0%}"
+        f"{len(eligible):,} sellers meeting its evidence gates, not {intended_percentile:.0%}"
     )
 
 

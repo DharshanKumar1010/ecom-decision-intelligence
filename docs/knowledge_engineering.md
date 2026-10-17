@@ -274,33 +274,34 @@ seller's final recommendation) and from running every rule against `SellerFacts.
 ("matches": all conditions true, whatever the priority). The same counts are in `reports/RESULTS.md`.
 
 Each percentile-intent threshold was set at the percentile of the **reference population** named
-in the third column, not always of all sellers. R01 and R03 use the 1,864 sellers with at least 5
-items sold because that is the group they apply to since the Stage 8 minimum-evidence rule
-(section 10). R06 and R10 keep the median over all 2,970 sellers (R10 is gated at 5 items sold
+in the third column, not always of all sellers. R01 and R03 use the sellers meeting every
+evidence gate (items sold, delivered orders, reviewed orders) because that is the group they
+apply to since the Stage 8 and Stage 9 minimum-evidence rules (sections 10 and 11). R06 and R10 keep the median over all 2,970 sellers (R10 is gated at 5 items sold
 but its median was set before the gate and was deliberately left).
 
 Distributions the thresholds were checked against (2,970 sellers unless stated): `avg_review`
 (2,965 sellers with a reviewed order; one review per distinct order) minimum 1.0, 10th 3.33, 25th
 3.97, median 4.28, 75th 4.67, 90th 5.0; `late_rate` median 0, 75th 0.10, 90th 0.222, 95th 0.337;
 `avg_late_risk` over all sellers 25th 0.277, median 0.339, 75th 0.416, 90th 0.501 and over the
-1,864 sellers with at least 5 items sold 75th 0.412, 90th 0.476; `ahp_score` (1,864 sellers with
+1,846 sellers meeting R01's evidence gates 75th 0.4127 (0.413) and over the 1,847 meeting R03's
+90th 0.4757 (0.476); `ahp_score` (1,864 sellers with
 a score, after the Stage 5 order-level shrinkage, section 8) 10th 0.549, 25th 0.601, median 0.644,
 75th 0.681, 90th 0.711; `order_volume` (items sold) median 8, 75th 26, 90th 83.
 
 | Rule | Conditions | Reference population | Matches | Fires | Why this level |
 |---|---|---|---|---|---|
-| R01 Suspend | `avg_late_risk > 0.412 and avg_review < 3.5 and order_volume >= 5` | sellers with >= 5 items sold | 70 | 70 | Top quartile of predicted risk among sellers with at least 5 items sold, together with a clearly below-average review (between the 10th and 25th percentile). Risk alone is not enough to suspend. |
-| R02 Suspend | `late_rate > 0.4 and order_volume >= 10` | sellers with >= 10 items sold | 7 | 6 | An observed (not predicted) late rate above 40% is a severe failure; 10 or more items sold rules out a fluke from one or two late shipments. A fixed severity level, not a percentile. |
+| R01 Suspend | `avg_late_risk > 0.413 and avg_review < 3.5 and order_volume >= 5 and n_orders >= 3 and n_reviewed >= 3` | sellers with >= 5 items sold, >= 3 delivered orders and >= 3 reviewed orders | 69 | 69 | Top quartile of predicted risk among sellers with that much evidence, together with a clearly below-average review (between the 10th and 25th percentile). Risk alone is not enough to suspend. |
+| R02 Suspend | `late_rate > 0.4 and order_volume >= 10 and n_orders >= 3` | sellers with >= 10 items sold and >= 3 delivered orders | 7 | 6 | An observed (not predicted) late rate above 40% is a severe failure; 10 or more items sold rules out a fluke from one or two late shipments. A fixed severity level, not a percentile. |
 | R06 Feature | `ahp_score >= 0.711 and avg_late_risk < 0.339` | all sellers | 137 | 137 | Top decile of AHP quality with at-or-below-median predicted risk: a proven, low-risk top performer. The median is taken over all sellers. |
 | R07 Feature | `avg_review >= 4.3 and order_volume >= 83` | sellers with >= 83 items sold | 78 | 37 | High volume (90th percentile of items sold) sustained alongside a high average review; 4.3 is a little above the median seller. |
 | R09 Promote | `is_hidden_gem == True and avg_late_risk < 0.252` | hidden gems | 111 | 104 | Hidden gem in roughly the lowest-risk quartile of hidden gems: the high-confidence Promote tier. |
 | R08 Promote | `is_hidden_gem == True and avg_late_risk < 0.3` | hidden gems | 222 | 106 | Hidden gem with predicted risk below the original literal cut-off of 0.3: the broader, lower-confidence Promote tier. R09 is a strict subset of it. |
-| R03 Warn | `avg_late_risk > 0.476 and order_volume >= 5` | sellers with >= 5 items sold | 184 | 144 | Top 10% of predicted risk among sellers with at least 5 items sold: on its own a caution signal, set above R01 because it fires without a review condition. |
-| R04 Warn | `avg_review < 3.5 and order_volume >= 5` | sellers with >= 5 items sold | 137 | 66 | Average review below 3.5 with at least 5 items sold: a pattern, not one bad review. |
-| R05 Warn | `late_rate > 0.25 and order_volume >= 5` | sellers with >= 5 items sold | 105 | 31 | More than a quarter of a seller's own items arrived late (about the 90th percentile), with at least 5 items sold. |
-| R10 Keep | `avg_late_risk <= 0.339 and avg_review >= 4.28 and order_volume >= 5` | sellers with >= 5 items sold | 485 | 170 | At-or-better-than-median predicted risk (all sellers) and reviews (median 4.28) with a real history of 5 or more items: nothing to act on. |
-| R11 Keep | `ahp_score >= 0.549 and late_rate <= 0.1` | all sellers | 1,288 | 701 | AHP quality above the bottom decile and an observed late rate at or below the 75th percentile: a wide no-red-flags net. |
-| R12 Keep | `(always)` | all sellers | 2,970 | 1,398 | Default, so every seller gets a recommendation. Catches every seller with fewer than 5 items sold, plus sellers no stronger rule matched. |
+| R03 Warn | `avg_late_risk > 0.476 and order_volume >= 5 and n_orders >= 3` | sellers with >= 5 items sold and >= 3 delivered orders | 183 | 144 | Top 10% of predicted risk among sellers with at least 5 items sold and 3 delivered orders: on its own a caution signal, set above R01 because it fires without a review condition. |
+| R04 Warn | `avg_review < 3.5 and order_volume >= 5 and n_reviewed >= 3` | sellers with >= 5 items sold and >= 3 reviewed orders | 129 | 59 | Average review below 3.5 with at least 5 items sold and 3 reviewed orders: a pattern, not one bad review. |
+| R05 Warn | `late_rate > 0.25 and order_volume >= 5 and n_orders >= 3` | sellers with >= 5 items sold and >= 3 delivered orders | 103 | 31 | More than a quarter of a seller's own items arrived late (about the 90th percentile), with at least 5 items sold and 3 delivered orders. |
+| R10 Keep | `avg_late_risk <= 0.339 and avg_review >= 4.28 and order_volume >= 5` | sellers with >= 5 items sold | 485 | 171 | At-or-better-than-median predicted risk (all sellers) and reviews (median 4.28) with a real history of 5 or more items: nothing to act on. |
+| R11 Keep | `ahp_score >= 0.549 and late_rate <= 0.1` | all sellers | 1,288 | 706 | AHP quality above the bottom decile and an observed late rate at or below the 75th percentile: a wide no-red-flags net. |
+| R12 Keep | `(always)` | all sellers | 2,970 | 1,400 | Default, so every seller gets a recommendation. Catches every seller with fewer than 5 items sold, plus sellers no stronger rule matched. |
 
 **Priority ladder** (rationale for the ordering, not just the numbers):
 Suspend (100, 98) > Feature (90, 88) > Promote (80, 78) > Warn (70, 68, 66)
@@ -742,3 +743,70 @@ items delivered late, taken over item rows). They now say "items" or "items sold
 changed: no condition, threshold, priority or action, so all 2,970 recommendations keep their rule
 and action and only the 273 sellers on those four rules show new reason wording. The quote of the
 old R05 text in the table of section 5b is history and stays as it was.
+
+**Update (Stage 9).** The items-sold gate alone turned out to be too weak for rules that read
+per-order averages; section 11 adds gates in delivered and reviewed orders and re-derives R01's
+threshold (0.412 to 0.413). R03 stays 0.476. The figures in this section describe Stage 8 as it was.
+
+## 11. Independent evidence in orders for Warn and Suspend (Stage 9)
+
+**Problem.** `order_volume` counts items (order lines), but a review and lateness belong to an
+**order**, `avg_review` is a mean of one review per distinct order, and the empirical-Bayes
+shrinkage (section 8) is per distinct order. A seller with five items from one or two orders
+therefore passed the 5-item gate of section 10 with one or two independent observations behind
+its average review. Measured on the files: 17 sellers had at least 5 items sold but fewer than
+3 delivered orders (18 with fewer than 3 reviewed orders), and 9 of the 317 Warn/Suspend sellers
+had fewer than 3 delivered or reviewed orders (for example a seller with 5 items sold, 1 delivered
+order and 1 review of 1.0 was Warn by R04).
+
+**Change.** `src/discovery.py` adds two integer facts for all 2,970 sellers, computed on the same
+seller-order table as `avg_review` (an order with items from two sellers counts once for each):
+`n_orders` (distinct delivered orders) and `n_reviewed` (those with a review). The existing item
+gates stay and each Warn/Suspend rule gains the order gate that matches the evidence it reads:
+
+| Rule | New gate (in addition to the items-sold gate) | Reads |
+|---|---|---|
+| R01 Suspend | `n_orders >= 3` and `n_reviewed >= 3` | `avg_late_risk` and `avg_review` |
+| R02 Suspend | `n_orders >= 3` | `late_rate` |
+| R03 Warn | `n_orders >= 3` | `avg_late_risk` |
+| R04 Warn | `n_reviewed >= 3` | `avg_review` |
+| R05 Warn | `n_orders >= 3` | `late_rate` |
+
+Three is the smallest number of independent observations from which a mean or a rate is more
+than a pair of anecdotes; it is a floor, not a statistical guarantee (the shrinkage handles the
+rest). The `because` texts say "items sold", "delivered orders" and "reviewed orders" in plain
+words. R06 to R12 are untouched; `n_reviewed <= n_orders <= order_volume` holds for every seller.
+
+**Thresholds.** R01 (75th percentile of `avg_late_risk`) and R03 (90th) are percentile-intent on
+the sellers each rule can apply to, so both were re-derived on the sellers meeting every evidence
+gate (the review condition is what the rule tests, so it is not part of the population):
+
+| Rule | Population | Exact percentile | Threshold | Share at or below |
+|---|---|---|---|---|
+| R01 | 1,846 sellers (>= 5 items, >= 3 orders, >= 3 reviewed) | 75th = 0.4127 | 0.412 -> **0.413** | 75.1% (0.412 would be 74.8%) |
+| R03 | 1,847 sellers (>= 5 items, >= 3 orders) | 90th = 0.4757 | 0.476 -> **0.476** (unchanged) | 90.1% |
+
+The rejected alternative was to read "every non-risk condition" literally for R01, i.e. also
+require `avg_review < 3.5`: that population is 129 sellers, the threshold becomes 0.500, and 44
+sellers change action (Suspend 75 -> 39, Warn +36), over the agreed limit of 40, and "top
+quartile of risk" would then mean the top quartile of already badly reviewed sellers. R01's text
+promises the former.
+
+**Effect (before -> after).** Keep 2,269 -> 2,277, Warn 241 -> 234, Suspend 76 -> 75, Feature 174
+and Promote 210 unchanged (total 2,970). Fires: R01 70 -> 69, R04 66 -> 59, R10 170 -> 171, R11
+701 -> 706, R12 1,398 -> 1,400; R02, R03, R05 and R06 to R09 keep their counts (R05 trades one
+seller for another). 8 sellers changed action (Warn to Keep 7, Suspend to Keep 1) and 1 more
+changed rule within Warn (R04 to R05); the reason text of 308 other sellers changed wording only.
+Sellers with fewer than 5 items sold or fewer than 3 delivered orders number 1,123; none is Warn
+or Suspend (1,121 Keep, 2 Promote), and 1,109 of them sit in the default rule. The quadrants,
+the 437 hidden gems, the AHP ranking, the risk scores, the models and `sql/schema.sql` are
+byte-identical to before. **Open observation:** the two Promote sellers have at least 5 items sold
+but fewer than 3 orders; Promote is directional and carries its evidence tier, so it was left as is.
+
+**Guards.** `tests/test_expert.py` fails if a Warn or Suspend rule loses one of the gates above,
+if a rule does not switch exactly at 2 versus 3 orders, if a Warn/Suspend recommendation has
+fewer than 3 delivered orders (or R01/R04 fewer than 3 reviewed orders), if any rule except the
+default stops firing on some but not all of its reference population, or if R01 and R03 leave the
+75th and 90th percentile of the sellers they apply to. `tests/test_seller_facts_review.py` pins
+`n_orders` and `n_reviewed` on a fixture (3 items in 1 reviewed order: 1 and 1; 4 items in 2
+orders with one review: 2 and 1) and against `ahp.seller_order_table` for every seller.

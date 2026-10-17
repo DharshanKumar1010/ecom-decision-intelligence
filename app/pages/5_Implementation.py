@@ -17,7 +17,7 @@ import pandas as pd
 import streamlit as st
 
 from app import _theme as theme
-from app._common import load_knowledge_base, load_parquet, load_report_csv, seller_order_counts
+from app._common import load_knowledge_base, load_parquet, load_report_csv
 from app._components import (
     ITEMS_SOLD_NOTE,
     footer,
@@ -58,9 +58,8 @@ def _num(value: object) -> float | None:
 
 
 def _reviewed_orders(facts: pd.DataFrame) -> pd.Series:
-    """Reviewed orders per seller id for every seller in `facts` (0 if the seller has none)."""
-    counts = seller_order_counts()["reviewed_orders"]
-    return facts["seller_id"].map(counts).fillna(0).set_axis(facts["seller_id"])
+    """Reviewed orders per seller id (`n_reviewed` in SellerFacts; 0 if the seller has none)."""
+    return facts.set_index("seller_id")["n_reviewed"]
 
 
 def _example_order(facts: pd.DataFrame, recommendations: pd.DataFrame) -> pd.DataFrame:
@@ -298,6 +297,8 @@ def render() -> None:
         order_volume=_num(row["order_volume"]),
         late_rate=_num(row["late_rate"]),
         is_hidden_gem=bool(row["is_hidden_gem"]),
+        n_orders=_num(row["n_orders"]),
+        n_reviewed=_num(row["n_reviewed"]),
     )
     result = InferenceEngine(kb).run(memory.as_facts())
     action = result.fired_rule.action
@@ -305,11 +306,7 @@ def render() -> None:
 
     _result_block(result)
     review = "n/a" if pd.isna(row["avg_review"]) else fmt_num(row["avg_review"], 2)
-    counts = seller_order_counts()
-    orders = (
-        int(counts["delivered_orders"].get(seller_id, 0)),
-        int(counts["reviewed_orders"].get(seller_id, 0)),
-    )
+    orders = (int(row["n_orders"]), int(row["n_reviewed"]))
     kpis([
         ("Items sold", fmt_int(row["order_volume"]), None),
         ("Average review", review, "Average review score (1 to 5), one review per order."),

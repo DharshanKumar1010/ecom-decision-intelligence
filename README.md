@@ -75,8 +75,8 @@ date. Start with `docs/README.md` for an index of the rest of the documentation.
 - **Items sold, not orders.** A seller's volume counts order lines. An order with three products
   is three items sold.
 - **Hidden gems are directional.** Most have few items sold; the app separates *Stronger
-  evidence* from *Early signal*. A seller with fewer than 5 items sold is never warned or
-  suspended (the rules need that much history).
+  evidence* from *Early signal*. A seller with fewer than 5 items sold, or fewer than 3
+  delivered orders, is never warned or suspended (the rules need that much history).
 - The loader's `TrustServerCertificate=yes` setting skips certificate validation: fine for a
   local SQL Server Express instance, not for a remote server.
 

@@ -187,7 +187,10 @@ def build_seller_facts(
     Returns:
         DataFrame with columns `seller_id`, `ahp_score`, `avg_late_risk`,
         `avg_review` (mean of one review per distinct order, NaN if the seller has
-        no reviewed order), `order_volume` (items sold), `late_rate`, `is_hidden_gem`.
+        no reviewed order), `order_volume` (items sold), `late_rate`, `is_hidden_gem`,
+        and the two evidence counts the Warn/Suspend rules gate on: `n_orders` (distinct
+        delivered orders of the seller) and `n_reviewed` (those that have a review), both
+        integers for every seller, counted on the same seller-order table as `avg_review`.
     """
     item_level = fact[["item_key", "seller_id", "review_score", "is_late"]].merge(
         late_predictions, on="item_key", how="left"
@@ -199,11 +202,16 @@ def build_seller_facts(
     )
     # A review belongs to an ORDER and repeats on each of its items, so the seller's average
     # review is the mean of one review per distinct order (the same `avg_review_raw` Choice
-    # shows), for ALL sellers. A seller with no reviewed order keeps NaN.
-    per_order_review = (
-        seller_order_table(fact).groupby("seller_id")["review"].mean().rename("avg_review")
-    )
-    seller_stats = seller_stats.join(per_order_review).reset_index()
+    # shows), for ALL sellers. A seller with no reviewed order keeps NaN. The same table
+    # gives the independent evidence behind it: distinct orders and distinct reviewed orders
+    # (items of one order are not independent, so `order_volume` alone overstates it).
+    by_seller = seller_order_table(fact).groupby("seller_id")
+    per_order = pd.DataFrame({
+        "avg_review": by_seller["review"].mean(),
+        "n_orders": by_seller["order_id"].size().astype("int64"),
+        "n_reviewed": by_seller["review"].count().astype("int64"),
+    })
+    seller_stats = seller_stats.join(per_order).reset_index()
 
     merged = seller_stats.merge(
         quadrant_df[["seller_id", "ahp_score", "quadrant"]], on="seller_id", how="left"
@@ -212,7 +220,7 @@ def build_seller_facts(
     merged = merged.drop(columns="quadrant")
     return merged[
         ["seller_id", "ahp_score", "avg_late_risk", "avg_review", "order_volume",
-         "late_rate", "is_hidden_gem"]
+         "late_rate", "is_hidden_gem", "n_orders", "n_reviewed"]
     ]
 
 

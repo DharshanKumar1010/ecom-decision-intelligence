@@ -5,8 +5,9 @@ Four classes:
 - `KnowledgeBase` loads and validates `rules/seller_rules.yaml` (rejects
   duplicate rule ids, unknown fields, and unknown operators at load time).
 - `WorkingMemory` holds one seller's facts: `ahp_score`, `avg_late_risk`,
-  `avg_review`, `order_volume`, `late_rate`, `is_hidden_gem` — the exact
-  contract produced by `src.discovery.build_seller_facts`.
+  `avg_review`, `order_volume`, `late_rate`, `is_hidden_gem`, plus the evidence
+  counts `n_orders` (distinct delivered orders) and `n_reviewed` (distinct reviewed
+  orders) — the exact contract produced by `src.discovery.build_seller_facts`.
 - `InferenceEngine` evaluates every rule against a fact set (match), and
   fires the single highest-`priority` match, tie-breaking by ascending
   rule `id` (resolve). A knowledge base without a matching default rule
@@ -175,6 +176,8 @@ class WorkingMemory:
     order_volume: float | None
     late_rate: float | None
     is_hidden_gem: bool
+    n_orders: float | None = None
+    n_reviewed: float | None = None
 
     def as_facts(self) -> dict[str, Any]:
         """Return this seller's facts as a plain dict, keyed by fact name."""
@@ -185,6 +188,8 @@ class WorkingMemory:
             "order_volume": self.order_volume,
             "late_rate": self.late_rate,
             "is_hidden_gem": self.is_hidden_gem,
+            "n_orders": self.n_orders,
+            "n_reviewed": self.n_reviewed,
         }
 
 
@@ -296,6 +301,8 @@ def _facts_from_row(row: pd.Series) -> dict[str, Any]:
         "order_volume": _or_none(row["order_volume"]),
         "late_rate": _or_none(row["late_rate"]),
         "is_hidden_gem": bool(row["is_hidden_gem"]),
+        "n_orders": _or_none(row["n_orders"]),
+        "n_reviewed": _or_none(row["n_reviewed"]),
     }
 
 

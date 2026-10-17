@@ -346,15 +346,15 @@ def test_implementation_default_seller_has_five_reviewed_orders_and_a_fired_rule
     at = _run("Implementation")
     seller = at.session_state["impl_seller"]
     recs = pd.read_csv(config.REPORTS_DIR / "seller_recommendations.csv").set_index("seller_id")
-    fact = pd.read_parquet(
-        config.PROCESSED_DATA_DIR / "FactOrderItems.parquet",
-        columns=["order_id", "seller_id", "review_score"],
-    )
-    mine = fact[fact["seller_id"] == seller].groupby("order_id")["review_score"].first()
-    assert int(mine.notna().sum()) >= config.DISCOVERY_MIN_ORDERS
+    path = config.PROCESSED_DATA_DIR / "SellerFacts.parquet"
+    facts = pd.read_parquet(path).set_index("seller_id")
+    mine = facts.loc[seller]
+    assert int(mine["n_reviewed"]) >= config.DISCOVERY_MIN_ORDERS
     assert recs.loc[seller, "rule_id"] != "R12"
     text = _markdown(at)
-    assert "Reviewed orders:" in text and "Delivered orders:" in text and "Items sold:" in text
+    assert f"Delivered orders: {int(mine['n_orders']):,}" in text
+    assert f"Reviewed orders: {int(mine['n_reviewed']):,}" in text
+    assert f"Items sold: {int(mine['order_volume']):,}" in text
 
 
 def test_implementation_shows_the_recommendation_sentence_once(real_outputs: None) -> None:

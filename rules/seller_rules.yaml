@@ -83,23 +83,38 @@
 # 0.476 (90th). The all-seller values (0.416, 0.501) kept with the gate would fire on 67 and 99
 # sellers instead of 70 and 144; see docs/knowledge_engineering.md section 10. R06 and R10 keep
 # their all-seller median (0.339); sellers below 5 items sold can now only reach Keep.
+# Minimum independent evidence in ORDERS (Stage 9): order_volume counts items, but a review and
+# lateness belong to an ORDER, avg_review is a per-order mean and the shrinkage is per distinct
+# order, so five items from one or two orders passed the 5-item gate (17 sellers with >= 5
+# items sold had fewer than 3 delivered orders). Every Warn and Suspend rule now also needs
+# independent orders: R01 n_orders >= 3 and n_reviewed >= 3; R02, R03 and R05 n_orders >= 3;
+# R04 n_reviewed >= 3 (n_orders = distinct delivered orders, n_reviewed = those with a review,
+# both from src/discovery.py's SellerFacts). The item gates stay. R01 and R03 are percentile-
+# intent, so their thresholds were re-derived on the sellers the rule can now apply to, i.e.
+# those meeting every evidence gate (not the review condition): R01 0.412 -> 0.413 (75th
+# percentile of 1,846 sellers with >= 5 items, >= 3 orders, >= 3 reviewed), R03 stays 0.476
+# (90th percentile of 1,847 sellers with >= 5 items and >= 3 orders; exact value 0.4757).
+# See docs/knowledge_engineering.md section 11.
 
 - id: R01
   priority: 100
   if:
-    - {fact: avg_late_risk, op: ">", value: 0.412}
+    - {fact: avg_late_risk, op: ">", value: 0.413}
     - {fact: avg_review, op: "<", value: 3.5}
     - {fact: order_volume, op: ">=", value: 5}
+    - {fact: n_orders, op: ">=", value: 3}
+    - {fact: n_reviewed, op: ">=", value: 3}
   then: Suspend
-  because: "Predicted late-delivery risk in the top quartile of sellers with at least 5 items sold (the 75th percentile of that group) combined with average reviews below 3.5, and enough items sold that this is a pattern rather than one or two shipments."
+  because: "Predicted late-delivery risk in the top quartile of sellers with enough evidence (the 75th percentile of sellers with at least 5 items sold, 3 delivered orders and 3 reviewed orders) combined with an average review below 3.5, for a seller that itself has at least 5 items sold, 3 delivered orders and 3 reviewed orders, so this is a pattern rather than one or two orders."
 
 - id: R02
   priority: 98
   if:
     - {fact: late_rate, op: ">", value: 0.4}
     - {fact: order_volume, op: ">=", value: 10}
+    - {fact: n_orders, op: ">=", value: 3}
   then: Suspend
-  because: "Over 40% of a seller's own items arrived late, and there are enough items sold (>=10) that this is not a fluke from one or two shipments."
+  because: "Over 40% of a seller's own items arrived late, with at least 10 items sold and at least 3 delivered orders, so this is not a fluke from one or two orders."
 
 - id: R06
   priority: 90
@@ -138,24 +153,27 @@
   if:
     - {fact: avg_late_risk, op: ">", value: 0.476}
     - {fact: order_volume, op: ">=", value: 5}
+    - {fact: n_orders, op: ">=", value: 3}
   then: Warn
-  because: "Predicted late-delivery risk in roughly the top 10% of sellers with at least 5 items sold (the 90th percentile of that group) on its own is a caution signal even without a confirmed review or volume problem yet."
+  because: "Predicted late-delivery risk in roughly the top 10% of sellers with at least 5 items sold and 3 delivered orders (the 90th percentile of that group) on its own is a caution signal even without a confirmed review or volume problem yet."
 
 - id: R04
   priority: 68
   if:
     - {fact: avg_review, op: "<", value: 3.5}
     - {fact: order_volume, op: ">=", value: 5}
+    - {fact: n_reviewed, op: ">=", value: 3}
   then: Warn
-  because: "Average review below 3.5 with enough items sold (>=5) to be a real pattern rather than one bad review."
+  because: "Average review below 3.5 with at least 5 items sold and at least 3 reviewed orders, enough to be a real pattern rather than one bad review."
 
 - id: R05
   priority: 66
   if:
     - {fact: late_rate, op: ">", value: 0.25}
     - {fact: order_volume, op: ">=", value: 5}
+    - {fact: n_orders, op: ">=", value: 3}
   then: Warn
-  because: "More than a quarter of a seller's own items arrived late (90th-percentile territory), with enough items sold to trust the rate."
+  because: "More than a quarter of a seller's own items arrived late (90th-percentile territory), with at least 5 items sold and 3 delivered orders to trust the rate."
 
 - id: R10
   priority: 50

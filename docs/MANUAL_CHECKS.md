@@ -77,7 +77,8 @@ Things only a person can judge, plus ten queries to run in SSMS. Automated check
   sold = 130 >= 83"), a search box with a hint, and the comparison with the stored batch result
   (they must agree).
 - Paste the id of any seller with fewer than 5 items sold: the outcome is Keep from the default
-  rule, "pending more data". No seller with fewer than 5 items sold is ever Warn or Suspend.
+  rule, "pending more data". No seller with fewer than 5 items sold, or fewer than 3 delivered
+  orders, is ever Warn or Suspend (R01 and R04 also need 3 reviewed orders).
 
 **6 DSS Architecture** ("How does the system fit together?")
 - Data files 16, loaded into SQL Server 10, expert rules 12; the four boxes (data, models,
@@ -169,15 +170,15 @@ SELECT SUM(late_risk) AS sum_late_risk, AVG(late_risk) AS avg_late_risk,
 FROM dbo.LatePredictions;
 ```
 
-**6. Recommendations by action** (expected: Keep 2,269; Warn 241; Promote 210; Feature 174;
-Suspend 76; total 2,970)
+**6. Recommendations by action** (expected: Keep 2,277; Warn 234; Promote 210; Feature 174;
+Suspend 75; total 2,970)
 
 ```sql
 SELECT action, COUNT_BIG(*) AS sellers FROM dbo.SellerRecommendations GROUP BY action ORDER BY sellers DESC;
 ```
 
-**7. Recommendations by rule** (expected: R01 70; R02 6; R03 144; R04 66; R05 31; R06 137;
-R07 37; R08 106; R09 104; R10 170; R11 701; R12 1,398)
+**7. Recommendations by rule** (expected: R01 69; R02 6; R03 144; R04 59; R05 31; R06 137;
+R07 37; R08 106; R09 104; R10 171; R11 706; R12 1,400)
 
 ```sql
 SELECT rule_id, action, COUNT_BIG(*) AS sellers FROM dbo.SellerRecommendations GROUP BY rule_id, action ORDER BY rule_id;
@@ -190,14 +191,18 @@ Overlooked-Low-Quality 493; of the 437 hidden gems 44 with confidence `normal` a
 SELECT quadrant, confidence, COUNT_BIG(*) AS sellers FROM dbo.DiscoveryQuadrants GROUP BY quadrant, confidence ORDER BY quadrant, confidence;
 ```
 
-**9. Minimum evidence** (expected: 1,106 sellers with fewer than 5 items sold; 0 of them
-warned or suspended)
+**9. Minimum evidence** (expected: 1,106 sellers with fewer than 5 items sold; 1,123 with fewer
+than 5 items sold or fewer than 3 delivered orders; 0 of them warned or suspended)
 
 ```sql
-WITH items AS (SELECT seller_id, COUNT_BIG(*) AS n FROM dbo.FactOrderItems GROUP BY seller_id)
-SELECT SUM(CASE WHEN i.n < 5 THEN 1 ELSE 0 END) AS sellers_under_5_items,
-       SUM(CASE WHEN i.n < 5 AND r.action IN ('Warn', 'Suspend') THEN 1 ELSE 0 END) AS warned_or_suspended_under_5
-FROM items i JOIN dbo.SellerRecommendations r ON r.seller_id = i.seller_id;
+WITH s AS (
+    SELECT seller_id, COUNT_BIG(*) AS n_items, COUNT_BIG(DISTINCT order_id) AS n_orders
+    FROM dbo.FactOrderItems GROUP BY seller_id)
+SELECT SUM(CASE WHEN s.n_items < 5 THEN 1 ELSE 0 END) AS sellers_under_5_items,
+       SUM(CASE WHEN s.n_items < 5 OR s.n_orders < 3 THEN 1 ELSE 0 END) AS sellers_thin_evidence,
+       SUM(CASE WHEN (s.n_items < 5 OR s.n_orders < 3) AND r.action IN ('Warn', 'Suspend')
+                THEN 1 ELSE 0 END) AS warned_or_suspended_thin
+FROM s JOIN dbo.SellerRecommendations r ON r.seller_id = s.seller_id;
 ```
 
 **10. The scorecard view keeps every seller** (expected: 3,095 rows; 681 with an AHP score;

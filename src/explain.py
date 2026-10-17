@@ -58,6 +58,8 @@ _FACT_LABELS: dict[str, str] = {
     "avg_late_risk": "predicted late risk",
     "avg_review": "average review score",
     "order_volume": "number of items sold",
+    "n_orders": "number of delivered orders",
+    "n_reviewed": "number of reviewed orders",
     "late_rate": "actual late-delivery rate",
     "is_hidden_gem": "Hidden Gem status",
 }

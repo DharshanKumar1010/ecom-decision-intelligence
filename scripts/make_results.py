@@ -330,6 +330,32 @@ def rule_condition_text(rule: expert.Rule) -> str:
     return " and ".join(f"{c.fact} {c.op} {c.value}" for c in rule.conditions) or "(always)"
 
 
+_EVIDENCE_COLUMNS = (
+    ("order_volume", "items sold"),
+    ("n_orders", "delivered orders"),
+    ("n_reviewed", "reviewed orders"),
+)
+
+
+def _minimum_evidence_line(facts: pd.DataFrame, recs: pd.DataFrame) -> str:
+    """The sentence on sellers with too little evidence for Warn or Suspend (items and orders)."""
+    merged = recs.merge(facts[["seller_id", "order_volume", "n_orders", "n_reviewed"]], on="seller_id")
+    thin_items = merged[merged["order_volume"] < 5]
+    thin = merged[(merged["order_volume"] < 5) | (merged["n_orders"] < 3)]
+    acts = ", ".join(f"{k} {v:,}" for k, v in thin["action"].value_counts().items())
+    flagged = merged["action"].isin(["Warn", "Suspend"])
+    return (
+        f"Minimum evidence: {len(thin_items):,} sellers have fewer than 5 items sold and "
+        f"{len(thin):,} have fewer than 5 items sold or fewer than 3 delivered orders; the "
+        f"actions of the latter are {acts}, and {int((thin['rule_id'] == 'R12').sum()):,} of them "
+        "sit in the default Keep rule. Warn or Suspend for those sellers: "
+        f"{int(flagged[thin.index].sum())}. Warn or Suspend with fewer than 3 delivered orders: "
+        f"{int((flagged & (merged['n_orders'] < 3)).sum())}; rules R01 or R04 firing with fewer "
+        f"than 3 reviewed orders: "
+        f"{int((merged['rule_id'].isin(['R01', 'R04']) & (merged['n_reviewed'] < 3)).sum())}."
+    )
+
+
 def _rules_section() -> list[str]:
     kb = expert.KnowledgeBase.from_yaml(config.RULES_DIR / "seller_rules.yaml")
     facts = pd.read_parquet(config.PROCESSED_DATA_DIR / "SellerFacts.parquet")
@@ -339,9 +365,15 @@ def _rules_section() -> list[str]:
     actions = recs["action"].value_counts()
     rows = []
     for rule in sorted(kb.rules, key=lambda r: -r.priority):
-        gate = [c.value for c in rule.conditions if c.fact == "order_volume" and c.op == ">="]
-        population = len(facts) if not gate else int((facts["order_volume"] >= max(gate)).sum())
-        label = "all sellers" if not gate else f"items sold ≥ {int(max(gate))}"
+        eligible = facts
+        parts = []
+        for column, name in _EVIDENCE_COLUMNS:
+            gate = [c.value for c in rule.conditions if c.fact == column and c.op == ">="]
+            if gate:
+                eligible = eligible[eligible[column] >= max(gate)]
+                parts.append(f"{name} ≥ {int(max(gate))}")
+        population = len(eligible)
+        label = ", ".join(parts) if parts else "all sellers"
         matches = sum(1 for f in fact_dicts if rule.matches(f))
         cond = rule_condition_text(rule)
         rows.append(
@@ -355,13 +387,6 @@ def _rules_section() -> list[str]:
                 f"{int(fired.get(rule.id, 0)):,}",
             ]
         )
-    tiny = facts[facts["order_volume"] < 5]["seller_id"]
-    tiny_actions = recs[recs["seller_id"].isin(set(tiny))]["action"].value_counts().to_dict()
-    tiny_text = ", ".join(f"{k} {v:,}" for k, v in tiny_actions.items())
-    below = recs.merge(facts[["seller_id", "order_volume"]], on="seller_id")
-    risky_tiny = int(
-        below[(below["order_volume"] < 5) & below["action"].isin(["Warn", "Suspend"])].shape[0]
-    )
     return [
         "## Recommendations (expert system)",
         "",
@@ -388,8 +413,7 @@ def _rules_section() -> list[str]:
             ],
             rows,
         ),
-        f"Minimum evidence: {len(tiny):,} sellers have fewer than 5 items sold; their actions are "
-        f"{tiny_text}. Warn or Suspend for those sellers: {risky_tiny}.",
+        _minimum_evidence_line(facts, recs),
         "",
     ]
 

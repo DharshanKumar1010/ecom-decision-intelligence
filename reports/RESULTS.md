@@ -93,23 +93,23 @@ Hidden gems by evidence: 44 with at least 15 items sold (stronger evidence), 393
 
 ## Recommendations (expert system)
 
-2,970 sellers. Actions: Keep 2,269, Warn 241, Suspend 76, Feature 174, Promote 210.
+2,970 sellers. Actions: Keep 2,277, Warn 234, Suspend 75, Feature 174, Promote 210.
 
 Rules in priority order. *matches* counts sellers whose conditions are all true; *fires* counts sellers whose final recommendation is that rule (a higher-priority rule can take over). Thresholds are read from `rules/seller_rules.yaml`, never typed elsewhere.
 
 | rule | action | priority | conditions | matches | reference population | fires |
 |---|---|---|---|---|---|---|
-| R01 | Suspend | 100 | `avg_late_risk > 0.412 and avg_review < 3.5 and order_volume >= 5` | 70 | 1,864 (items sold ≥ 5) | 70 |
-| R02 | Suspend | 98 | `late_rate > 0.4 and order_volume >= 10` | 7 | 1,342 (items sold ≥ 10) | 6 |
+| R01 | Suspend | 100 | `avg_late_risk > 0.413 and avg_review < 3.5 and order_volume >= 5 and n_orders >= 3 and n_reviewed >= 3` | 69 | 1,846 (items sold ≥ 5, delivered orders ≥ 3, reviewed orders ≥ 3) | 69 |
+| R02 | Suspend | 98 | `late_rate > 0.4 and order_volume >= 10 and n_orders >= 3` | 7 | 1,340 (items sold ≥ 10, delivered orders ≥ 3) | 6 |
 | R06 | Feature | 90 | `ahp_score >= 0.711 and avg_late_risk < 0.339` | 137 | 2,970 (all sellers) | 137 |
 | R07 | Feature | 88 | `avg_review >= 4.3 and order_volume >= 83` | 78 | 299 (items sold ≥ 83) | 37 |
 | R09 | Promote | 80 | `is_hidden_gem == True and avg_late_risk < 0.252` | 111 | 2,970 (all sellers) | 104 |
 | R08 | Promote | 78 | `is_hidden_gem == True and avg_late_risk < 0.3` | 222 | 2,970 (all sellers) | 106 |
-| R03 | Warn | 70 | `avg_late_risk > 0.476 and order_volume >= 5` | 184 | 1,864 (items sold ≥ 5) | 144 |
-| R04 | Warn | 68 | `avg_review < 3.5 and order_volume >= 5` | 137 | 1,864 (items sold ≥ 5) | 66 |
-| R05 | Warn | 66 | `late_rate > 0.25 and order_volume >= 5` | 105 | 1,864 (items sold ≥ 5) | 31 |
-| R10 | Keep | 50 | `avg_late_risk <= 0.339 and avg_review >= 4.28 and order_volume >= 5` | 485 | 1,864 (items sold ≥ 5) | 170 |
-| R11 | Keep | 48 | `ahp_score >= 0.549 and late_rate <= 0.1` | 1,288 | 2,970 (all sellers) | 701 |
-| R12 | Keep | 1 | `(always)` | 2,970 | 2,970 (all sellers) | 1,398 |
+| R03 | Warn | 70 | `avg_late_risk > 0.476 and order_volume >= 5 and n_orders >= 3` | 183 | 1,847 (items sold ≥ 5, delivered orders ≥ 3) | 144 |
+| R04 | Warn | 68 | `avg_review < 3.5 and order_volume >= 5 and n_reviewed >= 3` | 129 | 1,846 (items sold ≥ 5, reviewed orders ≥ 3) | 59 |
+| R05 | Warn | 66 | `late_rate > 0.25 and order_volume >= 5 and n_orders >= 3` | 103 | 1,847 (items sold ≥ 5, delivered orders ≥ 3) | 31 |
+| R10 | Keep | 50 | `avg_late_risk <= 0.339 and avg_review >= 4.28 and order_volume >= 5` | 485 | 1,864 (items sold ≥ 5) | 171 |
+| R11 | Keep | 48 | `ahp_score >= 0.549 and late_rate <= 0.1` | 1,288 | 2,970 (all sellers) | 706 |
+| R12 | Keep | 1 | `(always)` | 2,970 | 2,970 (all sellers) | 1,400 |
 
-Minimum evidence: 1,106 sellers have fewer than 5 items sold; their actions are Keep 1,106. Warn or Suspend for those sellers: 0.
+Minimum evidence: 1,106 sellers have fewer than 5 items sold and 1,123 have fewer than 5 items sold or fewer than 3 delivered orders; the actions of the latter are Keep 1,121, Promote 2, and 1,109 of them sit in the default Keep rule. Warn or Suspend for those sellers: 0. Warn or Suspend with fewer than 3 delivered orders: 0; rules R01 or R04 firing with fewer than 3 reviewed orders: 0.

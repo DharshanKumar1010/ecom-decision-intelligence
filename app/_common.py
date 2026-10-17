@@ -114,26 +114,6 @@ _FACT_COLUMNS = ("order_id", "seller_id", "review_score", "is_late")
 
 
 @st.cache_data(show_spinner=False)
-def _seller_order_counts(path: str, mtime: float) -> pd.DataFrame:
-    fact = pd.read_parquet(path, columns=list(_FACT_COLUMNS))
-    orders = seller_order_table(fact)
-    grouped = orders.groupby("seller_id")
-    return pd.DataFrame({
-        "delivered_orders": grouped["order_id"].size(),
-        "reviewed_orders": grouped["review"].count(),
-    })
-
-
-def seller_order_counts() -> pd.DataFrame:
-    """Per seller (index `seller_id`): `delivered_orders` and `reviewed_orders`.
-
-    Distinct orders, from the same seller-order table `SellerFacts.avg_review` is built on
-    (an order containing items from two sellers counts once for each of them).
-    """
-    return _seller_order_counts(*data_key(processed_path("FactOrderItems.parquet")))
-
-
-@st.cache_data(show_spinner=False)
 def _marketplace_review(path: str, mtime: float) -> tuple[float, float]:
     fact = pd.read_parquet(path, columns=list(_FACT_COLUMNS))
     per_order = float(seller_order_table(fact)["review"].mean())

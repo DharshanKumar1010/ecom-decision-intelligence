@@ -79,7 +79,8 @@ tables.
 > "The page opens on a seller with at least 5 reviewed orders where a real rule fired, shows the
 > recommendation in one word, and ticks off each condition behind it. Under Technical details
 > are all the rules and what would have to change to get a different outcome. A seller with
-> fewer than 5 items sold is never warned or suspended; it shows Keep with the default rule,
+> fewer than 5 items sold, or fewer than 3 delivered orders, is never warned or suspended; it
+> shows Keep with the default rule,
 > 'pending more data'."
 
 ### 6. DSS Architecture: "How does the system fit together?"
