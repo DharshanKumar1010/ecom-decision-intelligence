@@ -191,13 +191,20 @@ def test_intelligence_kpis_match_fact_table_and_synthetic_is_tagged(real_outputs
     at = _run("Intelligence")
     fact = pd.read_parquet(
         config.PROCESSED_DATA_DIR / "FactOrderItems.parquet",
-        columns=["order_id", "price", "is_late", "review_score"],
+        columns=["order_id", "seller_id", "price", "is_late", "review_score"],
     )
     metrics = _metrics(at)
     assert metrics["Delivered orders"] == f"{fact['order_id'].nunique():,}"
     assert metrics["Item revenue"] == money_short(float(fact["price"].sum()))
     assert metrics["Late-delivery rate"] == f"{fact['is_late'].mean() * 100:.2f}%"
-    assert metrics["Average review score"] == f"{fact['review_score'].mean():.2f} / 5"
+    # One review per (seller, order), the definition behind SellerFacts.avg_review; NOT the mean
+    # over item rows, which counts a review once for every item of its order.
+    per_order = fact.groupby(["seller_id", "order_id"])["review_score"].first().mean()
+    per_item = fact["review_score"].mean()
+    assert round(per_order, 2) != round(per_item, 2)
+    assert metrics["Average review score"] == f"{per_order:.2f} / 5"
+    review_kpi = next(m for m in at.metric if m.label == "Average review score")
+    assert f"{per_item:.2f}" in review_kpi.help and "one review per order" in review_kpi.help
     text = _markdown(at)
     assert text.count('class="tag">Synthetic data') >= 2  # funnel and call sections
     assert any("no audio and no speech recognition" in c.value for c in at.caption)
@@ -288,8 +295,9 @@ def test_choice_top_table_uses_short_ids_and_keeps_the_discovery_pointer(
     at = _run("Choice")
     assert f"{config.AHP_MIN_ORDERS}+ items sold" in _markdown(at)
     assert "Discovery" in _markdown(at)
-    top = next(df.value for df in at.dataframe if "seller" in df.value.columns)
-    assert len(top) == 10 and top["seller"].str.len().max() <= 9
+    top = next(df.value for df in at.dataframe if "Rank" in df.value.columns)
+    assert len(top) == 10 and top["Seller"].str.len().max() <= 9
+    assert f"AHP score ({config.AHP_MIN_ORDERS}+ items pool)" in top.columns
 
 
 def test_discovery_caution_counts_line_table_and_download(real_outputs: None) -> None:
@@ -297,7 +305,7 @@ def test_discovery_caution_counts_line_table_and_download(real_outputs: None) ->
     n = config.DISCOVERY_CONFIDENCE_MIN_ORDERS
     assert any(
         c.value == (
-            "This page surfaces sellers with strong quality signals but low order volume. "
+            "This page surfaces sellers with strong quality signals but few items sold. "
             f"Sellers with fewer than {n} items sold are flagged low-confidence; a few good "
             "reviews on a handful of items sold is promising, not proof."
         )
@@ -311,12 +319,17 @@ def test_discovery_caution_counts_line_table_and_download(real_outputs: None) ->
     for label, count in quadrants["quadrant"].value_counts().items():
         assert re.search(rf"<b>{label}</b></span> {count:,}", text), label
 
-    tables = [df.value for df in at.dataframe if "Average review" in df.value.columns]
-    assert len(tables) == 2  # Actionable, then Watchlist
+    tables = [df.value for df in at.dataframe if "Average review (per order)" in df.value.columns
+              and "Group" not in df.value.columns]
+    assert len(tables) == 2  # Stronger evidence, then Early signal
     actionable, watchlist = tables
     for table in tables:
-        assert list(table.columns) == ["Seller", "Items sold", "Average review", "Confidence"]
+        assert list(table.columns) == [
+            "Seller", "Items sold", f"Quality score ({config.DISCOVERY_MIN_ORDERS}+ items pool)",
+            "Average review (per order)", "Confidence",
+        ]
         assert table["Seller"].str.len().max() <= 9
+    assert any("ranked by quality score" in c.value for c in at.caption)
     gems = quadrants[quadrants["quadrant"] == "Hidden Gem"]
     n_actionable = int((gems["confidence"] == "normal").sum())
     n_watch = int((gems["confidence"] == "low").sum())
@@ -366,26 +379,31 @@ def test_implementation_default_seller_is_not_the_default_rule(real_outputs: Non
 
 def test_implementation_example_dropdown_replaces_the_buttons(real_outputs: None) -> None:
     recommendations = pd.read_csv(config.REPORTS_DIR / "seller_recommendations.csv")
-    items = pd.read_parquet(config.PROCESSED_DATA_DIR / "SellerFacts.parquet").set_index(
-        "seller_id"
-    )["order_volume"]
+    fact = pd.read_parquet(
+        config.PROCESSED_DATA_DIR / "FactOrderItems.parquet",
+        columns=["order_id", "seller_id", "review_score"],
+    )
+    reviewed = (
+        fact.groupby(["seller_id", "order_id"])["review_score"].first().groupby("seller_id").count()
+    )
     at = _run("Implementation")
     assert not at.button
     for action in ("Warn", "Suspend", "Feature", "Promote", "Keep"):
         at.selectbox(key="impl_example").select(action).run()
         assert not at.exception
         pool = recommendations[recommendations["action"] == action]
-        enough_items = pool["seller_id"].map(items) >= config.DISCOVERY_MIN_ORDERS
-        strong = pool[(pool["rule_id"] != "R12") & enough_items]
+        enough_reviews = pool["seller_id"].map(reviewed).fillna(0) >= config.DISCOVERY_MIN_ORDERS
+        strong = pool[(pool["rule_id"] != "R12") & enough_reviews]
         # The example is the first seller (file order) whose rule fired for a real reason and who
-        # has enough items sold; only if there is none does it fall back to the first of the action.
+        # has enough REVIEWED orders; only if there is none does it fall back to the first of the
+        # action.
         expected = (strong if not strong.empty else pool)["seller_id"].iloc[0]
         assert at.session_state["impl_seller"] == expected
         assert _displayed_action(at) == action
         if not strong.empty:
             chosen = recommendations.set_index("seller_id").loc[at.session_state["impl_seller"]]
             assert chosen["rule_id"] != "R12"
-            assert items[at.session_state["impl_seller"]] >= config.DISCOVERY_MIN_ORDERS
+            assert reviewed[at.session_state["impl_seller"]] >= config.DISCOVERY_MIN_ORDERS
 
 
 def test_implementation_live_engine_matches_batch_for_many_sellers(real_outputs: None) -> None:
@@ -591,11 +609,18 @@ def test_choice_full_table_shows_raw_reviews_and_keeps_the_shrunk_columns(
     real_outputs: None,
 ) -> None:
     at = _run("Choice")
-    full = next(df.value for df in at.dataframe if "avg_review_raw" in df.value.columns)
-    assert {"avg_review_raw", "on_time_rate_raw", "avg_review_score", "on_time_rate"} <= set(
-        full.columns
-    )
-    assert "pulled toward the marketplace mean" in _markdown(at)
-    assert (full["avg_review_raw"].between(1, 5)).all()
+    full = next(df.value for df in at.dataframe if "Average review (shrunk)" in df.value.columns)
+    wanted = {
+        "Average review (per order)", "On-time rate (per order)", "Average review (shrunk)",
+        "On-time rate (shrunk)", "Reviewed orders", "Delivered orders",
+    }
+    assert wanted <= set(full.columns)
+    text = _markdown(at)
+    assert "pulled toward the marketplace mean" in text
+    # The sentence names exactly the column groups the table has (raw, orders, shrunk, shares).
+    assert "headed shrunk" in text and "contributions" in text
+    assert (full["Average review (per order)"].between(1, 5)).all()
     # Shrinkage never moves a value past the marketplace mean, so it stays between them.
-    assert (full["avg_review_score"] - full["avg_review_raw"]).abs().max() < 1.5
+    assert (full["Average review (shrunk)"] - full["Average review (per order)"]).abs().max() < 1.5
+    assert (full["Reviewed orders"] <= full["Delivered orders"]).all()
+    assert "scales every criterion" in text  # the Choice-versus-Discovery pool explanation

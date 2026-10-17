@@ -64,6 +64,26 @@ def _csv_rows(table: str) -> int:
     return len(pd.read_csv(path, usecols=[0], dtype=str, keep_default_na=False))
 
 
+def _marketplace_section() -> list[str]:
+    fact = pd.read_parquet(
+        config.PROCESSED_DATA_DIR / "FactOrderItems.parquet",
+        columns=["order_id", "seller_id", "price", "is_late", "review_score"],
+    )
+    per_order = float(ahp.seller_order_table(fact)["review"].mean())
+    per_item = float(fact["review_score"].mean())
+    return [
+        "## Marketplace (real Olist data)",
+        "",
+        f"{fact['order_id'].nunique():,} delivered orders, {len(fact):,} items sold, item revenue "
+        f"R$ {fact['price'].sum():,.2f} (excluding freight), late-delivery rate "
+        f"{fact['is_late'].mean() * 100:.2f}% of items. Average review per reviewed order: "
+        f"**{per_order:.2f}** (one review per order, counted once for each seller in the order, "
+        f"the definition behind every seller's average review); counting a review once per item "
+        f"would give {per_item:.2f}, which is not used. Source `FactOrderItems.parquet`.",
+        "",
+    ]
+
+
 def _models_section() -> list[str]:
     metrics = _json(config.REPORTS_DIR / "model_metrics.json")
     oof = _json(config.REPORTS_DIR / "oof_metrics.json")
@@ -383,6 +403,7 @@ def build_results() -> str:
         "by hand; regenerate with `python scripts/make_results.py` (a test fails if this file is "
         "out of date). Other documents point here instead of repeating these numbers.",
         "",
+        *_marketplace_section(),
         *_models_section(),
         *_temporal_section(),
         *_leaf_section(),

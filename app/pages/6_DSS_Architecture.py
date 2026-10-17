@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import pandas as pd
 import streamlit as st
 
-from app._common import DATA_CATALOG, load_knowledge_base
+from app._common import DATA_CATALOG, load_knowledge_base, schema_table_count
 from app._components import (
     footer,
     kpis,
@@ -22,6 +22,7 @@ from app._components import (
     subtitle,
     technical,
 )
+from app._format import fmt_int
 from src import config, explain
 
 set_page("DSS Architecture")
@@ -30,14 +31,17 @@ _SUBTITLE = page_header("How does the system fit together?")
 # CLAUDE.md section 2: DSS subsystem mapping.
 _SUBSYSTEMS = (
     ("Data management", "Builds, stores and serves the data",
-     ("src/build_tables.py", "src/synthetic.py", "src/export_sql.py")),
+     ("src/build_tables.py", "src/synthetic.py", "src/export_sql.py", "src/load_sql.py",
+      "sql/schema.sql")),
     ("Model management", "Analytical and predictive models",
      ("src/clickstream.py", "src/sentiment.py", "src/predict.py", "src/ahp.py",
       "src/discovery.py")),
     ("Knowledge base", "Expert rules and the inference/explanation engine",
      ("src/expert.py", "rules/seller_rules.yaml")),
-    ("User interface", "How decision makers see and use the results",
-     ("app/Home.py", "app/_common.py", "app/_components.py", "app/_theme.py",
+    ("User interface", "How decision makers see and use the results, and the plain-language "
+     "explanation layer",
+     ("src/explain.py", "app/Home.py", "app/_common.py", "app/_components.py",
+      "app/_format.py", "app/_labels.py", "app/_theme.py",
       "app/pages/1_Intelligence.py", "app/pages/2_Design.py", "app/pages/3_Choice.py",
       "app/pages/4_Discovery.py", "app/pages/5_Implementation.py",
       "app/pages/6_DSS_Architecture.py")),
@@ -52,9 +56,10 @@ _PHASES = (
 )
 
 
-def _flow(n_tables: int, n_rules: int) -> None:
+def _flow(n_files: int, n_loaded: int, n_rules: int) -> None:
     boxes = (
-        ("1. Data", [f"{n_tables} data tables", "Real Olist orders, reviews and sellers",
+        ("1. Data", [f"{n_files} data files ({n_loaded} loaded into SQL Server)",
+                     "Real Olist orders, reviews and sellers",
                      "Synthetic clickstream and calls", "Cleaned and checked by the pipeline"]),
         ("2. Models", ["Late-delivery risk (random forest)", "Seller ranking (AHP)",
                        "Quality vs popularity groups", "Call sentiment (VADER)"]),
@@ -81,10 +86,10 @@ def _catalog() -> None:
     for entry in DATA_CATALOG:
         count = entry.row_count()
         rows.append({
-            "Table": entry.name,
+            "File": entry.name,
             "Location": ("data/processed/" if entry.kind == "parquet" else "reports/")
                         + entry.path.name,
-            "Rows": f"{count:,}" if count is not None else "—",
+            "Rows": fmt_int(count) if count is not None else "—",
             "Status": "ok" if count is not None else "missing — run `python run_all.py`",
             "Synthetic": "Synthetic data" if entry.synthetic else "",
             "Description": entry.description,
@@ -96,8 +101,8 @@ def _catalog() -> None:
             f"**{n_missing} of {len(frame)} catalog files are missing.** Run "
             "`python run_all.py` from the project root to generate them."
         )
-    st.markdown(f"**Data catalog: all {len(frame)} tables (row counts read live)**")
-    st.table(frame.set_index("Table").style.set_properties(
+    st.markdown(f"**Data catalog: all {len(frame)} files (row counts read live)**")
+    st.table(frame.set_index("File").style.set_properties(
         subset=["Rows"], **{"text-align": "right"}
     ))
 
@@ -118,12 +123,15 @@ def _modules() -> None:
 
 def render() -> None:
     n_rules = len(load_knowledge_base().rules)
-    subtitle(_SUBTITLE, explain.architecture_answer(len(DATA_CATALOG), n_rules))
+    n_loaded = schema_table_count()
+    subtitle(_SUBTITLE, explain.architecture_answer(len(DATA_CATALOG), n_rules, n_loaded))
     kpis([
-        ("Data tables", f"{len(DATA_CATALOG)}", None),
-        ("Expert rules", f"{n_rules}", None),
+        ("Data files", fmt_int(len(DATA_CATALOG)), None),
+        ("Loaded into SQL Server", fmt_int(n_loaded),
+         "The tables created by sql/schema.sql; the other files stay as Parquet or CSV."),
+        ("Expert rules", fmt_int(n_rules), None),
     ])
-    _flow(len(DATA_CATALOG), n_rules)
+    _flow(len(DATA_CATALOG), n_loaded, n_rules)
     section("Phases of decision making")
     st.table(pd.DataFrame(_PHASES, columns=["Phase", "Question it answers", "Page"])
              .set_index("Phase"))

@@ -86,9 +86,12 @@ def test_auc_below_a_coin_flip_is_called_out() -> None:
 def test_cv_sentence_reports_live_mean_and_spread_and_stability() -> None:
     stable = cv_sentence(0.7928, 0.0051)
     assert "79%" in stable and "0.5 percentage points" in stable and "stable" in stable
+    assert "does not cover the forward-looking test" in stable
     wobbly = cv_sentence(0.70, 0.06)
     assert "6.0 percentage points" in wobbly and "caution" in wobbly and "stable" not in wobbly
-    assert "5 different slices" in cv_sentence(0.7, 0.01, folds=5)
+    five = cv_sentence(0.7, 0.01, folds=5)
+    assert "5 order-grouped folds" in five and "stable across the 5 order-grouped folds" in five
+    assert "does not cover" not in wobbly
 
 
 def test_cr_sentence_distinguishes_consistent_from_contradictory() -> None:
@@ -259,8 +262,10 @@ def test_page_answers_contain_the_live_values_passed_in() -> None:
     assert "681 established" in choice and "at least 30 items sold" in choice
     answer = discovery_answer(478, 400, 15)
     assert "478" in answer and "400" in answer and "fewer than 15 items sold" in answer
-    architecture = architecture_answer(16, 12)
-    assert "16 data tables" in architecture and "12 rules" in architecture
+    architecture = architecture_answer(16, 12, 10)
+    assert "16 data files (10 of them loaded into SQL Server)" in architecture
+    assert "12 rules" in architecture and "data tables" not in architecture
+    assert "SQL Server" not in architecture_answer(16, 12)
 
 
 # --- agreement with the real engine on the real data --------------------------

@@ -17,7 +17,7 @@ import pandas as pd
 import streamlit as st
 
 from app import _theme as theme
-from app._common import load_knowledge_base, load_parquet, load_report_csv
+from app._common import load_knowledge_base, load_parquet, load_report_csv, seller_order_counts
 from app._components import (
     ITEMS_SOLD_NOTE,
     footer,
@@ -30,6 +30,7 @@ from app._components import (
     subtitle,
     technical,
 )
+from app._format import fmt_int, fmt_num, fmt_pct
 from src import config, explain
 from src.expert import (
     ExplanationFacility,
@@ -56,15 +57,22 @@ def _num(value: object) -> float | None:
     return None if pd.isna(value) else float(value)
 
 
+def _reviewed_orders(facts: pd.DataFrame) -> pd.Series:
+    """Reviewed orders per seller id for every seller in `facts` (0 if the seller has none)."""
+    counts = seller_order_counts()["reviewed_orders"]
+    return facts["seller_id"].map(counts).fillna(0).set_axis(facts["seller_id"])
+
+
 def _example_order(facts: pd.DataFrame, recommendations: pd.DataFrame) -> pd.DataFrame:
     """Recommendations reordered so "Try an example" lands on a meaningful seller first.
 
-    Sellers with enough items sold (`config.DISCOVERY_MIN_ORDERS`) and a rule other than the
-    default come first, then well-evidenced default-rule sellers, then thin ones; file order
-    is kept inside each group, so the choice is deterministic.
+    Sellers with enough reviewed orders (`config.DISCOVERY_MIN_ORDERS`, the project's minimum
+    amount of evidence) and a rule other than the default come first, then well-evidenced
+    default-rule sellers, then thin ones; file order is kept inside each group, so the choice
+    is deterministic.
     """
-    items = dict(zip(facts["seller_id"], facts["order_volume"], strict=True))
-    thin = recommendations["seller_id"].map(items).fillna(0) < config.DISCOVERY_MIN_ORDERS
+    reviewed = recommendations["seller_id"].map(_reviewed_orders(facts)).fillna(0)
+    thin = reviewed < config.DISCOVERY_MIN_ORDERS
     default_rule = recommendations["rule_id"] == _DEFAULT_RULE
     rank = thin.astype(int) * 2 + default_rule.astype(int)
     ranked = recommendations.assign(_rank=rank).sort_values("_rank", kind="stable")
@@ -90,13 +98,13 @@ def _lookup() -> None:
 
 def _default_seller(facts: pd.DataFrame, recommendations: pd.DataFrame) -> str:
     """A first seller worth looking at: a real rule fired (not the default) for a seller with
-    enough items sold (`config.DISCOVERY_MIN_ORDERS`) for the outcome to mean something.
+    enough REVIEWED orders (`config.DISCOVERY_MIN_ORDERS`) for the outcome to mean something.
 
     Prefers an actionable outcome (anything but Keep); falls back step by step, so the page
     always opens on some seller.
     """
-    enough_items = facts["order_volume"] >= config.DISCOVERY_MIN_ORDERS
-    well_evidenced = set(facts.loc[enough_items, "seller_id"])
+    reviewed = _reviewed_orders(facts)
+    well_evidenced = set(reviewed[reviewed >= config.DISCOVERY_MIN_ORDERS].index)
     in_facts = recommendations["seller_id"].isin(set(facts["seller_id"]))
     informative = recommendations[(recommendations["rule_id"] != _DEFAULT_RULE) & in_facts]
     informative = informative[informative["seller_id"].isin(well_evidenced)]
@@ -161,6 +169,35 @@ def _confidence_line(quadrant_row: pd.DataFrame) -> None:
              "Promote or Feature outcome as directional.")
 
 
+def _plain(value: object) -> str:
+    """A fact or threshold without float noise: 5.0 -> 5, 0.33900000000000002 -> 0.339."""
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if value is None or pd.isna(value):  # type: ignore[call-overload]
+        return "unknown"
+    number = float(value)  # type: ignore[arg-type]
+    return fmt_int(number) if number.is_integer() else fmt_num(number, 3).rstrip("0").rstrip(".")
+
+
+def _explanation_text(result: InferenceResult) -> str:
+    """The engine's explanation as short lines (nothing wide enough to be clipped)."""
+    rule = result.fired_rule
+    lines = [
+        f"Recommendation: {rule.action} (rule {rule.id}, priority {rule.priority}).",
+        f"Because: {rule.because}",
+    ]
+    if not rule.conditions:
+        lines.append("Matched on: no conditions (default rule).")
+        return "\n".join(lines)
+    lines.append("Matched on:")
+    for cond in rule.conditions:
+        lines.append(
+            f"  {explain.fact_label(cond.fact)} = {_plain(result.facts.get(cond.fact))} "
+            f"{cond.op} {_plain(cond.value)}"
+        )
+    return "\n".join(lines)
+
+
 def _rules_table(result: InferenceResult, kb: KnowledgeBase) -> None:
     rules: dict[str, Rule] = {rule.id: rule for rule in kb.rules}
     trace = ExplanationFacility.trace_summary(result)
@@ -168,7 +205,9 @@ def _rules_table(result: InferenceResult, kb: KnowledgeBase) -> None:
     def describe(rule: Rule) -> str:
         if not rule.conditions:
             return "Always matches (default)"
-        return " AND ".join(f"{c.fact} {c.op} {c.value}" for c in rule.conditions)
+        return " AND ".join(
+            f"{explain.fact_label(c.fact)} {c.op} {_plain(c.value)}" for c in rule.conditions
+        )
 
     table = pd.DataFrame({
         "Rule": [t["rule_id"] for t in trace],
@@ -204,7 +243,7 @@ def _agreement(result: InferenceResult, batch: pd.DataFrame) -> None:
 
 
 def _technical(result: InferenceResult, kb: KnowledgeBase, row: pd.Series,
-               batch: pd.DataFrame) -> None:
+               batch: pd.DataFrame, orders: tuple[int, int]) -> None:
     _agreement(result, batch)
     _rules_table(result, kb)
 
@@ -218,20 +257,25 @@ def _technical(result: InferenceResult, kb: KnowledgeBase, row: pd.Series,
             st.markdown(f"- {sentence}")
 
     st.markdown("**Other facts the rules use**")
-    quality = "n/a" if pd.isna(row["ahp_score"]) else f"{row['ahp_score']:.3f}"
+    quality = "n/a" if pd.isna(row["ahp_score"]) else fmt_num(row["ahp_score"], 3)
+    delivered, reviewed = orders
     st.markdown(
-        f"- Predicted late risk: {row['avg_late_risk']:.3f} (the average of out-of-fold "
+        f"- Items sold: {fmt_int(row['order_volume'])} · Delivered orders: {fmt_int(delivered)} "
+        f"· Reviewed orders: {fmt_int(reviewed)}\n"
+        f"- Predicted late risk: {fmt_num(row['avg_late_risk'], 3)} (the average of out-of-fold "
         "scores: each item was scored by a model that never saw any item of its order. It is "
         "still a model estimate, not a measured outcome; the measured outcome is the actual "
         "late rate)\n"
-        f"- Quality (AHP) score: {quality} (needs at least {config.DISCOVERY_MIN_ORDERS} "
-        "items sold)\n"
+        f"- Quality score ({config.DISCOVERY_MIN_ORDERS}+ items pool): {quality} (needs at "
+        f"least {config.DISCOVERY_MIN_ORDERS} items sold)\n"
         f"- Hidden Gem: {'yes' if bool(row['is_hidden_gem']) else 'no'}"
     )
     note(ITEMS_SOLD_NOTE)
     st.markdown("**Rule engine explanation**")
-    st.code(ExplanationFacility.explain(result), language="text")
-    st.text_input("Search by full seller id", key=_LOOKUP_KEY, on_change=_lookup)
+    st.code(_explanation_text(result), language="text", wrap_lines=True)
+    id_length = len(str(row["seller_id"]))
+    st.text_input("Search by full seller id", key=_LOOKUP_KEY, on_change=_lookup,
+                  placeholder=f"Paste a full {id_length}-character seller id")
     typed = str(st.session_state.get(_LOOKUP_KEY, "")).strip()
     if typed and typed not in st.session_state[_SELLER_IDS]:
         st.caption("No seller has that id.")
@@ -257,20 +301,26 @@ def render() -> None:
     )
     result = InferenceEngine(kb).run(memory.as_facts())
     action = result.fired_rule.action
-    subtitle(_SUBTITLE, f"{action}: {explain.ACTION_MEANING.get(action, 'see the reason below')}")
+    subtitle(_SUBTITLE, explain.ACTION_MEANING.get(action, "See the reason below."))
 
     _result_block(result)
-    review = "n/a" if pd.isna(row["avg_review"]) else f"{row['avg_review']:.2f}"
+    review = "n/a" if pd.isna(row["avg_review"]) else fmt_num(row["avg_review"], 2)
+    counts = seller_order_counts()
+    orders = (
+        int(counts["delivered_orders"].get(seller_id, 0)),
+        int(counts["reviewed_orders"].get(seller_id, 0)),
+    )
     kpis([
-        ("Items sold", f"{int(row['order_volume'])}", None),
+        ("Items sold", fmt_int(row["order_volume"]), None),
         ("Average review", review, "Average review score (1 to 5), one review per order."),
-        ("Late-delivery rate", f"{row['late_rate'] * 100:.1f}%",
+        ("Late-delivery rate", fmt_pct(row["late_rate"], 1),
          "Share of this seller's items that really were delivered late."),
     ])
     _confidence_line(quadrants.loc[quadrants["seller_id"] == seller_id])
 
     with technical():
-        _technical(result, kb, row, recommendations.loc[recommendations["seller_id"] == seller_id])
+        _technical(result, kb, row,
+                   recommendations.loc[recommendations["seller_id"] == seller_id], orders)
 
 
 run_page(render)

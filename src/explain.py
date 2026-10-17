@@ -6,9 +6,10 @@ no metric is ever baked into prose: change the input and the sentence changes
 come from the `Rule` objects loaded from `rules/seller_rules.yaml`, never from
 literals here, so a later recalibration of the rules cannot leave stale copy.
 
-Wording rules: `auc_sentence` explains ROC-AUC as a ranking probability and
-never calls it "accuracy" (it is not accuracy); `cv_sentence` only calls a
-result stable when the fold-to-fold spread is small.
+Wording rules: `auc_sentence` explains ROC-AUC as the chance that a randomly chosen late
+order is ranked above a randomly chosen on-time one, and never calls it "accuracy" (it is
+not accuracy); `cv_sentence` only calls a result stable when the fold-to-fold spread is small,
+and says what that stability does not cover.
 """
 
 from __future__ import annotations
@@ -108,6 +109,11 @@ def _is_missing(value: Any) -> bool:
 # --------------------------------------------------------------------------
 
 
+def fact_label(name: str) -> str:
+    """Plain label for a fact the expert system reads (humanised fallback for unknown names)."""
+    return _FACT_LABELS.get(name, _humanise(name))
+
+
 def feature_label(name: str) -> str:
     """Readable label for a model feature (humanised fallback for unknown names)."""
     return _FEATURE_LABELS.get(name, _humanise(name))
@@ -119,7 +125,8 @@ def feature_label(name: str) -> str:
 
 
 def auc_sentence(auc: float) -> str:
-    """What a ROC-AUC means, as a random-pair ranking probability.
+    """What a ROC-AUC means: the chance that a randomly chosen late order is ranked above
+    a randomly chosen on-time one.
 
     Deliberately never uses the word for plain correctness: AUC measures how
     well the model ranks late orders above on-time ones, not how often it is
@@ -136,12 +143,20 @@ def auc_sentence(auc: float) -> str:
 
 
 def cv_sentence(mean: float, std: float, folds: int | None = None) -> str:
-    """Cross-validation result in words; 'stable' only if the spread is small."""
-    slices = f"{folds} different slices" if folds else "different slices"
+    """Cross-validation result in words; 'stable' only if the spread is small.
+
+    The stability claim is limited to the folds it was measured on; it says explicitly that it
+    does not cover the forward-looking test.
+    """
+    slices = f"{folds} order-grouped folds" if folds else "different slices"
     lead = f"Re-tested on {slices} of the data, the score averaged {mean * 100:.0f}%"
     spread = f"with a typical swing of {std * 100:.1f} percentage points"
     if std <= _STABLE_CV_STD:
-        return f"{lead}, {spread}, so the result is stable rather than a lucky split."
+        where = f"the {folds} order-grouped folds" if folds else "these slices"
+        return (
+            f"{lead}, {spread}, so the result is stable across {where}; this does not cover "
+            "the forward-looking test above."
+        )
     return (
         f"{lead}, {spread}; that is a wide swing, so treat the headline number with caution."
     )
@@ -421,9 +436,10 @@ def discovery_answer(n_gems: int, n_low_confidence: int, min_orders: int) -> str
     )
 
 
-def architecture_answer(n_tables: int, n_rules: int) -> str:
-    """Headline for the DSS Architecture page."""
+def architecture_answer(n_files: int, n_rules: int, n_loaded: int | None = None) -> str:
+    """Headline for the DSS Architecture page (`n_loaded` of the files go into SQL Server)."""
+    loaded = f" ({n_loaded} of them loaded into SQL Server)" if n_loaded is not None else ""
     return (
-        f"The system turns {n_tables} data tables into a risk score, a seller ranking and one of "
-        f"five recommendations, using {n_rules} rules a person can read."
+        f"The system turns {n_files} data files{loaded} into a risk score, a seller ranking and "
+        f"one of five recommendations, using {n_rules} rules a person can read."
     )

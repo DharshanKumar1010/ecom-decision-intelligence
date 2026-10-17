@@ -12,7 +12,12 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app import _theme as theme
-from app._common import load_parquet, load_report_csv, quadrant_thresholds
+from app._common import (
+    hidden_gems_download,
+    load_parquet,
+    load_report_csv,
+    quadrant_thresholds,
+)
 from app._components import (
     ITEMS_SOLD_NOTE,
     caption,
@@ -25,8 +30,11 @@ from app._components import (
     short_id,
     show,
     subtitle,
+    table,
     technical,
 )
+from app._format import fmt_int, fmt_num
+from app._labels import with_tier_labels
 from src import config, explain
 from src.discovery import TIER_ACTIONABLE, TIER_WATCHLIST, top_hidden_gems
 
@@ -36,6 +44,7 @@ _SUBTITLE = page_header("Which good sellers are we overlooking?")
 _N_CONF = config.DISCOVERY_CONFIDENCE_MIN_ORDERS
 _QUADRANTS = tuple(theme.QUADRANTS)
 _TOP_N = 10
+_SCORE_LABEL = f"Quality score ({config.DISCOVERY_MIN_ORDERS}+ items pool)"
 # (quadrant, x, y, xanchor, yanchor, one-line label)
 _CORNERS = (
     ("Star", 0.99, 0.99, "right", "top", "Star: good and popular"),
@@ -98,7 +107,8 @@ def _scatter(quadrants: pd.DataFrame, quality_line: float, popularity_line: floa
         )
     fig.update_layout(
         xaxis={"title": "Popularity: items sold (log scale)", "type": "log", "showgrid": False},
-        yaxis={"title": "Quality: AHP score (0 to 1)", "showgrid": True, "gridcolor": theme.GRID},
+        yaxis={"title": f"Quality score, {config.DISCOVERY_MIN_ORDERS}+ items pool (0 to 1)",
+               "showgrid": True, "gridcolor": theme.GRID},
         height=540,
         margin={"l": 8, "r": 8, "t": 8, "b": 8},
         legend={"y": -0.2},
@@ -110,7 +120,7 @@ def _counts_line(quadrants: pd.DataFrame) -> None:
     counts = quadrants["quadrant"].value_counts()
     parts = [
         f'<span style="color:{theme.QUADRANTS[q].text}"><b>{q}</b></span> '
-        f"{int(counts.get(q, 0)):,}"
+        f"{fmt_int(int(counts.get(q, 0)))}"
         for q in _QUADRANTS
     ]
     st.markdown(" · ".join(parts), unsafe_allow_html=True)
@@ -118,20 +128,16 @@ def _counts_line(quadrants: pd.DataFrame) -> None:
 
 def _tier_table(rows: pd.DataFrame) -> None:
     shown = pd.DataFrame({
-        "Seller": rows["seller_id"].map(short_id),
-        "Items sold": rows["order_volume"],
-        "Average review": rows["avg_review"],
-        "Confidence": rows["confidence"].map(
+        "seller_id": rows["seller_id"].map(short_id),
+        "order_volume": rows["order_volume"],
+        "ahp_score": rows["ahp_score"],
+        "avg_review": rows["avg_review"],
+        "confidence": rows["confidence"].map(
             {"low": f"low (under {_N_CONF} items sold)", "normal": "normal"}
         ),
     })
-    st.dataframe(
-        shown, hide_index=True, width="stretch",
-        column_config={
-            "Items sold": st.column_config.NumberColumn(format="%d"),
-            "Average review": st.column_config.NumberColumn(format="%.2f"),
-        },
-    )
+    table(shown, {"order_volume": "int", "ahp_score": "num3", "avg_review": "num2"},
+          overrides={"ahp_score": _SCORE_LABEL})
 
 
 def _gems_tables(quadrants: pd.DataFrame, popularity_line: float) -> None:
@@ -141,12 +147,14 @@ def _gems_tables(quadrants: pd.DataFrame, popularity_line: float) -> None:
     counts = everyone["tier"].value_counts()
 
     section("Hidden gems by confidence")
-    note(f"By definition, hidden gems have under {popularity_line:,.0f} items sold, so most picks "
-         "are directional rather than proven.")
+    caption("Both lists are ranked by quality score (shrunk average review and on-time "
+            "delivery, price and items sold), so the review column is not in order.")
+    note(f"By definition, hidden gems have under {fmt_num(popularity_line, 0)} items sold, so "
+         "most picks are directional rather than proven.")
     for tier, label in ((TIER_ACTIONABLE, f"Stronger evidence ({_N_CONF}+ items sold)"),
                         (TIER_WATCHLIST, f"Early signal (under {_N_CONF} items sold)")):
         total = int(counts.get(tier, 0))
-        st.markdown(f"**{label}: {total:,} sellers**")
+        st.markdown(f"**{label}: {fmt_int(total)} sellers**")
         rows = everyone[everyone["tier"] == tier].head(_TOP_N)
         if tier == TIER_ACTIONABLE and total < _TOP_N:
             st.markdown(f"Only {total} hidden gems have {_N_CONF}+ items sold, so this list is "
@@ -155,7 +163,7 @@ def _gems_tables(quadrants: pd.DataFrame, popularity_line: float) -> None:
             _tier_table(rows)
     st.download_button(
         "Download all hidden gems (CSV, full seller ids, with tier)",
-        everyone.drop(columns=["avg_review"]).to_csv(index=False).encode("utf-8"),
+        hidden_gems_download(everyone.drop(columns=["avg_review"])),
         file_name="hidden_gems.csv",
         mime="text/csv",
     )
@@ -171,7 +179,7 @@ def render() -> None:
     _counts_line(quadrants)
     show(_scatter(quadrants, quality_line, popularity_line))
     caption(
-        "This page surfaces sellers with strong quality signals but low order volume. "
+        "This page surfaces sellers with strong quality signals but few items sold. "
         f"Sellers with fewer than {_N_CONF} items sold are flagged low-confidence; a few good "
         "reviews on a handful of items sold is promising, not proof."
     )
@@ -194,14 +202,11 @@ def render() -> None:
         )
         note(ITEMS_SOLD_NOTE)
         st.markdown("**Top hidden gems per tier, with full seller ids**")
-        st.dataframe(top_hidden_gems(quadrants, n=_TOP_N, tiered=True), hide_index=True,
-                     width="stretch")
+        table(with_tier_labels(top_hidden_gems(quadrants, n=_TOP_N, tiered=True)),
+              {"ahp_score": "num4", "order_volume": "int"}, overrides={"ahp_score": _SCORE_LABEL})
         st.markdown("**Every plotted seller**")
-        st.dataframe(
-            quadrants.sort_values("ahp_score", ascending=False),
-            hide_index=True,
-            width="stretch",
-        )
+        table(quadrants.sort_values("ahp_score", ascending=False),
+              {"ahp_score": "num4", "order_volume": "int"}, overrides={"ahp_score": _SCORE_LABEL})
 
 
 run_page(render)

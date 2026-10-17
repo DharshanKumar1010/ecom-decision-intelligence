@@ -27,8 +27,10 @@ from app._components import (
     short_id,
     show,
     subtitle,
+    table,
     technical,
 )
+from app._format import fmt_int, fmt_num
 from src import config, explain
 from src.ahp import compute_weights, score_sellers
 
@@ -45,6 +47,10 @@ _N = len(config.AHP_CRITERIA)
 _PAIRS = [(i, j) for i in range(_N) for j in range(i + 1, _N)]
 _SAATY_MIN, _SAATY_MAX = 1 / 9, 9.0
 _TOP_N = 10
+_DIRECTION = {"benefit": "Higher is better", "cost": "Lower is better"}
+# The pool this page scores: sellers with at least this many items sold. Discovery scores a
+# larger pool (config.DISCOVERY_MIN_ORDERS), so the same seller's number differs slightly.
+_SCORE_LABEL = f"AHP score ({config.AHP_MIN_ORDERS}+ items pool)"
 
 
 def _key(i: int, j: int) -> str:
@@ -110,77 +116,64 @@ def _top_table(ranking: pd.DataFrame, weights: np.ndarray) -> None:
     rescored = score_sellers(ranking, weights, config.AHP_CRITERIA)
     top = rescored.head(_TOP_N).copy()
     top.insert(0, "rank", np.arange(1, len(top) + 1))
-    top["seller"] = top["seller_id"].map(short_id)
-    st.dataframe(
-        top[["rank", "seller", "seller_state", "ahp_score", "order_volume"]],
-        hide_index=True,
-        width="stretch",
-        column_config={
-            "rank": "Rank",
-            "seller": "Seller",
-            "seller_state": "State",
-            "ahp_score": st.column_config.NumberColumn("Score", format="%.3f"),
-            "order_volume": st.column_config.NumberColumn("Items sold", format="%d"),
-        },
+    top["seller_id"] = top["seller_id"].map(short_id)
+    table(
+        top[["rank", "seller_id", "seller_state", "ahp_score", "order_volume"]],
+        {"ahp_score": "num3", "order_volume": "int"},
+        overrides={"ahp_score": _SCORE_LABEL},
     )
 
 
 def _full_ranking(ranking: pd.DataFrame, weights: np.ndarray, lambda_max: float, ci: float,
                   cr: float) -> None:
     st.markdown(
-        f"**Consistency maths:** λ max {lambda_max:.4f} · consistency index {ci:.4f} · "
-        f"consistency ratio {cr:.4f}"
+        f"**Consistency maths:** λ max {fmt_num(lambda_max, 4)} · consistency index "
+        f"{fmt_num(ci, 4)} · consistency ratio {fmt_num(cr, 4)}"
     )
-    st.dataframe(
+    table(
         pd.DataFrame({
-            "Criterion": list(config.AHP_CRITERIA),
-            "Direction": [config.AHP_CRITERION_DIRECTION[c] for c in config.AHP_CRITERIA],
+            "Criterion": [_LABELS[c] for c in config.AHP_CRITERIA],
+            "Direction": [_DIRECTION[config.AHP_CRITERION_DIRECTION[c]]
+                          for c in config.AHP_CRITERIA],
             "Weight (your matrix)": weights,
             "Weight (configured)": compute_weights(config.AHP_PAIRWISE_MATRIX)[0],
         }),
-        hide_index=True,
-        width="stretch",
-        column_config={
-            "Weight (your matrix)": st.column_config.NumberColumn(format="percent"),
-            "Weight (configured)": st.column_config.NumberColumn(format="percent"),
-        },
+        {"Weight (your matrix)": "pct", "Weight (configured)": "pct"},
     )
     note(
         "Average review and on-time rate are pulled toward the marketplace mean before "
         "scoring (empirical-Bayes shrinkage counted in distinct orders: prior strength "
         f"{config.AHP_SHRINKAGE_K_REVIEW} for reviews and {config.AHP_SHRINKAGE_K_ON_TIME} "
-        "for on-time rate), so a few "
-        "perfect reviews cannot outrank a long, strong record. The table shows the raw "
-        "values; the shrunk values used for scoring are in the last two columns. "
+        "for on-time rate), so a few perfect reviews cannot outrank a long, strong record. "
+        "The table lists each seller's raw average review and on-time rate (one value per "
+        "order) with the number of reviewed and delivered orders behind them, then the shrunk "
+        "values that are used for scoring (headed shrunk), then the four contributions that "
+        "add up to the score. "
         + ITEMS_SOLD_NOTE
     )
-    st.markdown(f"**All {len(ranking):,} established sellers (configured weights)**")
-    st.dataframe(
-        ranking,
-        hide_index=True,
-        width="stretch",
-        column_order=[
-            "seller_id", "seller_state", "ahp_score",
+    note(
+        "The same seller can show a slightly different score here and on the Discovery page: "
+        "each page scales every criterion from its lowest to its highest value within its own "
+        f"pool of sellers ({config.AHP_MIN_ORDERS}+ items sold here, "
+        f"{config.DISCOVERY_MIN_ORDERS}+ on Discovery). The shrunk review and on-time "
+        "values themselves are the same on both."
+    )
+    st.markdown(f"**All {fmt_int(len(ranking))} established sellers (configured weights)**")
+    table(
+        ranking[[
+            "seller_id", "seller_state", "ahp_score", "order_volume", "n_reviewed", "n_orders",
+            "avg_review_raw", "on_time_rate_raw", "avg_review_score", "on_time_rate", "avg_price",
             "contribution_avg_review_score", "contribution_on_time_rate",
             "contribution_avg_price", "contribution_order_volume",
-            "avg_review_raw", "on_time_rate_raw", "avg_price", "order_volume",
-            "avg_review_score", "on_time_rate",
-        ],
-        column_config={
-            "seller_id": "Seller",
-            "seller_state": "State",
-            "ahp_score": st.column_config.NumberColumn("AHP score", format="%.4f"),
-            "avg_review_raw": st.column_config.NumberColumn(
-                "Avg review (per order)", format="%.2f"),
-            "on_time_rate_raw": st.column_config.NumberColumn(
-                "On-time rate (per order)", format="percent"),
-            "avg_price": st.column_config.NumberColumn("Avg price (BRL)", format="%.2f"),
-            "order_volume": "Items sold",
-            "avg_review_score": st.column_config.NumberColumn(
-                "Avg review (shrunk)", format="%.3f"),
-            "on_time_rate": st.column_config.NumberColumn(
-                "On-time rate (shrunk)", format="percent"),
+        ]],
+        {
+            "ahp_score": "num4", "order_volume": "int", "n_reviewed": "int", "n_orders": "int",
+            "avg_review_raw": "num2", "on_time_rate_raw": "pct", "avg_review_score": "num3",
+            "on_time_rate": "pct", "avg_price": "num2",
+            "contribution_avg_review_score": "num4", "contribution_on_time_rate": "num4",
+            "contribution_avg_price": "num4", "contribution_order_volume": "num4",
         },
+        overrides={"ahp_score": _SCORE_LABEL},
     )
 
 
@@ -197,11 +190,11 @@ def render() -> None:
 
     with main:
         kpis([
-            ("Established sellers ranked", f"{len(ranking):,}", None),
+            ("Established sellers ranked", fmt_int(len(ranking)), None),
             ("Minimum items sold", f"{config.AHP_MIN_ORDERS}",
              "Only sellers with at least this many items sold are ranked here. See the Discovery "
              "page for good sellers with fewer."),
-            ("Consistency ratio", f"{cr:.3f}",
+            ("Consistency ratio", fmt_num(cr, 3),
              "Below 0.10 means the pairwise judgments do not contradict each other."),
         ])
         left, right = st.columns([1, 1])

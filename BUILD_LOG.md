@@ -70,6 +70,11 @@ The old hand-imported `DimCustomer` and `DimProduct` were replaced.
   `docs/SYLLABUS_MAP.md`, `docs/MANUAL_CHECKS.md` (browser checks and ten SSMS queries) and a docs index added;
   `tasks.ps1 verify` and `rebuild` added. Full account: `docs/archive/CLEANUP_REPORT.md`.
 - *Follow-up.* The reason texts of R02, R04, R05 and R10 now say "items sold" instead of "orders" (only the `because` column of 273 recommendations changed; actions and rules identical; SQL reloaded and verified); the one test that failed without `data/raw` now skips; the Makefile has `load-sql`; "Try an example" opens on a seller with enough items sold. Details: `docs/archive/CLEANUP_REPORT.md`.
+- *Final polish before Power BI.* Every Technical-details table now has plain-language headers, one number format and one
+  risk colour pair; the average review on Intelligence is per order; Design says what the strongest input is and that nothing
+  is forward-looking; Implementation opens on a seller with 5+ reviewed orders and shows reviewed and delivered orders;
+  tier names read Stronger evidence / Early signal everywhere; `docs/powerbi_measures.md` added. No output, model or table
+  changed (hash-compared). Details: `docs/archive/FINAL_POLISH_REPORT.md`.
 
 ## Corrections that mattered
 

@@ -94,13 +94,14 @@ Defender, the registry, execution policy or file ACLs, and never use `Unblock-Fi
 CLAUDE.md  README.md  BUILD_LOG.md  tasks.ps1  Makefile  run_all.py  requirements.txt  pyproject.toml
 src/        config.py build_tables.py synthetic.py clickstream.py sentiment.py predict.py ahp.py
             discovery.py expert.py explain.py export_sql.py load_sql.py
-app/        Home.py pages/1..6_*.py _common.py _components.py _theme.py   (.streamlit/config.toml: dark theme)
+app/        Home.py pages/1..6_*.py _common.py _components.py _format.py _labels.py _theme.py
+            (.streamlit/config.toml: dark theme)
 rules/      seller_rules.yaml
 sql/        schema.sql                      (tables, keys, indexes, dbo.vw_SellerScorecard)
 scripts/    make_results.py app_smoke.py diagnostics/   (one-off experiments; not part of the pipeline)
 tests/      pytest suite
 docs/       README.md (index) knowledge_engineering.md DEMO_SCRIPT.md SYLLABUS_MAP.md MANUAL_CHECKS.md
-            powerbi_setup.md archive/
+            powerbi_setup.md powerbi_measures.md archive/
 reports/    generated outputs; RESULTS.md; diagnostics/
 data/       raw/ (input, ignored)  processed/  export/ (ignored)        models/ (ignored)    powerbi/ (ignored)
 ```
@@ -172,6 +173,9 @@ it quotes rule thresholds from the rule objects, never from literals.
 `app/_theme.py`, colour-blind-safe palette), plain-language headline per page, key numbers, one main chart and a single
 "Technical details" expander; every page notes its syllabus topic. It is the internal way to sanity-check outputs; the
 Power BI report is the presented deliverable. The app never loads the forest; it reads precomputed files.
+Numbers are formatted by `app/_format.py` (thousands separators, fixed decimals, no "-0.000"), table headers come from
+`app/_labels.py` (raw column names appear only in help text and CSV downloads), Technical-details tables go through
+`app/_components.table()`, and the evidence tiers are shown as "Stronger evidence" and "Early signal".
 
 7.8 **SQL Server layer.** `python -m src.export_sql` writes ten flat CSVs to `data/export/`; `python -m src.load_sql` loads them
 into SQL Server using `sql/schema.sql` (drop and recreate in dependency order, one transaction per table, row count against

@@ -12,11 +12,14 @@ import html
 from collections.abc import Callable
 from typing import Any
 
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from streamlit.errors import StreamlitPageNotFoundError
 
 from app import _theme as theme
+from app._format import clean
+from app._labels import COLUMN_LABELS, friendly
 
 MISSING_FILE_HELP = (
     "Run `python run_all.py` from the project root to generate the pipeline "
@@ -87,9 +90,14 @@ def kpis(items: list[tuple[str, str, str | None]]) -> None:
         col.metric(label, value, help=help_text)
 
 
+def synthetic_tag() -> str:
+    """HTML for the small grey "Synthetic data" tag (for headings and sentences)."""
+    return f'<span class="tag">{SYNTHETIC_TAG}</span>'
+
+
 def section(title: str, synthetic: bool = False) -> None:
     """Section heading; synthetic data gets a small grey tag beside the title."""
-    tag = f'<span class="tag">{SYNTHETIC_TAG}</span>' if synthetic else ""
+    tag = synthetic_tag() if synthetic else ""
     st.markdown(f"### {title} {tag}" if tag else f"### {title}", unsafe_allow_html=True)
 
 
@@ -120,6 +128,47 @@ def footer(topic: str, analytics: str, level: str) -> None:
 def show(fig: go.Figure) -> None:
     """Render a Plotly figure with the shared template (Streamlit's theme must not override)."""
     st.plotly_chart(fig, width="stretch", theme=None, config={"displayModeBar": False})
+
+
+# Number kinds for `table`: "int" (thousands separators), "pct" (a share shown as a percentage
+# with 2 decimals), "numN" (N fixed decimals), e.g. "num3".
+def _column_for(kind: str, label: str, help_text: str | None) -> Any:
+    if kind == "int":
+        return st.column_config.NumberColumn(label, format="localized", help=help_text)
+    if kind == "pct":
+        return st.column_config.NumberColumn(label, format="percent", help=help_text)
+    if kind.startswith("num"):
+        return st.column_config.NumberColumn(label, format=f"%.{int(kind[3:])}f", help=help_text)
+    raise ValueError(f"unknown number kind {kind!r}")
+
+
+def table(
+    df: pd.DataFrame,
+    formats: dict[str, str] | None = None,
+    *,
+    overrides: dict[str, str] | None = None,
+    width: Any = "stretch",
+    hide_index: bool = True,
+) -> None:
+    """A Technical-details table: friendly headers, thousands separators, fixed decimals.
+
+    Columns are renamed through `app/_labels.py` BEFORE the frame reaches Streamlit, so what a
+    reader sees (and what a test can inspect) never contains a raw pipeline column name; the
+    raw name is kept in each column's help text. `formats` maps a raw column name to a number
+    kind (`"int"`, `"pct"`, `"num2"`...). Values are rounded first so no "-0.000" is shown.
+    """
+    shown = df.copy()
+    names = {**COLUMN_LABELS, **(overrides or {})}
+    for raw, kind in (formats or {}).items():
+        if raw in shown.columns and kind != "int":
+            places = 4 if kind == "pct" else int(kind[3:])
+            shown[raw] = shown[raw].map(lambda v, p=places: v if pd.isna(v) else clean(v, p))
+    config = {
+        names.get(raw, raw): _column_for(kind, names.get(raw, raw), f"Column: {raw}")
+        for raw, kind in (formats or {}).items() if raw in shown.columns
+    }
+    st.dataframe(friendly(shown, overrides), hide_index=hide_index, width=width,
+                 column_config=config)
 
 
 def money_short(value: float, currency: str = "R$") -> str:

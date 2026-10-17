@@ -14,6 +14,7 @@ pipeline show fresh numbers without restarting the app.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,7 +22,9 @@ import pandas as pd
 import pyarrow.parquet as pq
 import streamlit as st
 
+from app._labels import with_tier_labels
 from src import config
+from src.ahp import seller_order_table
 from src.expert import KnowledgeBase
 
 # --------------------------------------------------------------------------
@@ -101,6 +104,83 @@ def load_report_json(name: str) -> dict[str, object]:
 def load_knowledge_base() -> KnowledgeBase:
     """Load and validate `rules/seller_rules.yaml` (via `KnowledgeBase.from_yaml`)."""
     return _read_rules(*data_key(config.RULES_DIR / "seller_rules.yaml"))
+
+
+# --------------------------------------------------------------------------
+# Order-level counts and figures read from files
+# --------------------------------------------------------------------------
+
+_FACT_COLUMNS = ("order_id", "seller_id", "review_score", "is_late")
+
+
+@st.cache_data(show_spinner=False)
+def _seller_order_counts(path: str, mtime: float) -> pd.DataFrame:
+    fact = pd.read_parquet(path, columns=list(_FACT_COLUMNS))
+    orders = seller_order_table(fact)
+    grouped = orders.groupby("seller_id")
+    return pd.DataFrame({
+        "delivered_orders": grouped["order_id"].size(),
+        "reviewed_orders": grouped["review"].count(),
+    })
+
+
+def seller_order_counts() -> pd.DataFrame:
+    """Per seller (index `seller_id`): `delivered_orders` and `reviewed_orders`.
+
+    Distinct orders, from the same seller-order table `SellerFacts.avg_review` is built on
+    (an order containing items from two sellers counts once for each of them).
+    """
+    return _seller_order_counts(*data_key(processed_path("FactOrderItems.parquet")))
+
+
+@st.cache_data(show_spinner=False)
+def _marketplace_review(path: str, mtime: float) -> tuple[float, float]:
+    fact = pd.read_parquet(path, columns=list(_FACT_COLUMNS))
+    per_order = float(seller_order_table(fact)["review"].mean())
+    return per_order, float(fact["review_score"].mean())
+
+
+def marketplace_review() -> tuple[float, float]:
+    """`(mean review per reviewed order, mean review per item)` for the whole marketplace.
+
+    The first uses one review per order (the definition behind every seller's average review);
+    the second counts a review once for each item of its order and is shown only for contrast.
+    """
+    return _marketplace_review(*data_key(processed_path("FactOrderItems.parquet")))
+
+
+_TEMPORAL_ROW = re.compile(
+    r"^(?P<label>all 12 features|without order_month.*?)\s+(?P<lr>\d\.\d{4})\s+(?P<dt>\d\.\d{4})\s+"
+    r"(?P<rf>\d\.\d{4})",
+    re.MULTILINE,
+)
+
+
+def temporal_results() -> dict[str, dict[str, float]]:
+    """AUCs of the forward-looking check from `reports/diagnostics/diagnostic_temporal.txt`.
+
+    Returns `{"all": {"lr", "dt", "rf"}, "no_calendar": {...}}`, or `{}` if the report is absent
+    or in a different format (the page then leaves the sentence out rather than guess).
+    """
+    path = config.REPORTS_DIR / "diagnostics" / "diagnostic_temporal.txt"
+    if not path.exists():
+        return {}
+    found: dict[str, dict[str, float]] = {}
+    for match in _TEMPORAL_ROW.finditer(_read_text(*data_key(path))):
+        key = "all" if match["label"].startswith("all") else "no_calendar"
+        found[key] = {m: float(match[m]) for m in ("lr", "dt", "rf")}
+    return found if {"all", "no_calendar"} <= set(found) else {}
+
+
+def schema_table_count() -> int:
+    """Number of tables `sql/schema.sql` creates (the files that are loaded into SQL Server)."""
+    text = (config.PROJECT_ROOT / "sql" / "schema.sql").read_text(encoding="utf-8")
+    return len(re.findall(r"^\s*CREATE\s+TABLE\s", text, flags=re.MULTILINE | re.IGNORECASE))
+
+
+def hidden_gems_download(gems: pd.DataFrame) -> bytes:
+    """CSV bytes of the hidden-gem list: pipeline column names, user-facing tier names."""
+    return with_tier_labels(gems).to_csv(index=False).encode("utf-8")
 
 
 # --------------------------------------------------------------------------

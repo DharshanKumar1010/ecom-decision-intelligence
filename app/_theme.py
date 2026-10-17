@@ -63,6 +63,19 @@ FUNNEL_RAMP = ("#E8CB8F", "#D9B26F", "#C29F5C", "#AD8C4E")
 FUNNEL_TEXT = PAGE
 DIVERGING_SCALE = [[0.0, "#e66767"], [0.5, "#3A4452"], [1.0, "#3987e5"]]
 
+# Risk direction, used identically by the linear-model weights chart and the sensitivity heatmap:
+# red = raises late risk, blue = lowers it. Reuses the Suspend red and the Star blue, so no new
+# semantic colour exists. (DIVERGING_SCALE above runs the other way: it is for sentiment, where
+# negative is red and positive is blue.)
+RISK_RAISES = ACTIONS["Suspend"].color
+RISK_LOWERS = QUADRANTS["Star"].color
+RISK_SCALE = [[0.0, RISK_LOWERS], [0.5, "#3A4452"], [1.0, RISK_RAISES]]
+
+# Three device colours that are none of the action, quadrant or accent colours, each at least
+# 3:1 against both dark surfaces and clearly separable from each other (lavender, aqua, sand;
+# pairwise distance and colour-blind separation are checked in tests/test_app.py).
+DEVICE_COLORS = ("#a58bf0", "#5ed0e4", "#f2ead9")
+
 
 def contrast_ratio(foreground: str, background: str) -> float:
     """WCAG 2 contrast ratio between two `#rrggbb` colours."""

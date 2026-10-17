@@ -223,3 +223,53 @@ def test_syllabus_map_lists_only_existing_paths() -> None:
             if not re.search(rf"^(?:def|class) {re.escape(symbol)}\b", source, re.MULTILINE):
                 missing.append(item)
     assert not missing, f"docs/SYLLABUS_MAP.md lists names that do not exist: {missing}"
+
+
+# --------------------------------------------------------------------------
+# docs/powerbi_measures.md: every table and column exists; expected values are the files' values
+# --------------------------------------------------------------------------
+
+
+def _schema_columns() -> dict[str, set[str]]:
+    text = _read(ROOT / "sql" / "schema.sql")
+    tables: dict[str, set[str]] = {}
+    for match in re.finditer(r"CREATE TABLE dbo\.(\w+) \((.*?)\n\);", text, flags=re.DOTALL):
+        columns = re.findall(r"^\s{4}(\w+)\s+\w+", match.group(2), flags=re.MULTILINE)
+        tables[match.group(1)] = set(columns)
+    return tables
+
+
+def test_power_bi_measures_reference_only_columns_that_exist_in_schema_sql() -> None:
+    doc = _read(ROOT / "docs" / "powerbi_measures.md")
+    schema = _schema_columns()
+    refs = re.findall(r"\b([A-Z][A-Za-z]+)\[(\w+)\]", doc)
+    assert len(refs) >= 10
+    for table, column in refs:
+        assert table in schema, f"{table} is not a table in sql/schema.sql"
+        assert column in schema[table], f"{table}[{column}] is not a column in sql/schema.sql"
+    for table in re.findall(r"COUNTROWS\((\w+)\)", doc):
+        assert table in schema, table
+
+
+@needs_outputs
+def test_power_bi_expected_values_equal_the_files() -> None:
+    import pandas as pd
+
+    doc = _read(ROOT / "docs" / "powerbi_measures.md")
+    fact = pd.read_parquet(
+        config.PROCESSED_DATA_DIR / "FactOrderItems.parquet",
+        columns=["order_id", "price", "is_late"],
+    )
+    late = pd.read_parquet(config.PROCESSED_DATA_DIR / "LatePredictions.parquet")
+    quad = pd.read_csv(config.REPORTS_DIR / "discovery_quadrants.csv")
+    expected = [
+        f"| {fact['order_id'].nunique():,} |",
+        f"| {len(fact):,} |",
+        f"| R$ {fact['price'].sum():,.2f} |",
+        f"| {fact['is_late'].sum() / len(fact) * 100:.2f}% |",
+        f"| {late['late_risk'].mean():.3f} |",
+        f"| {int((quad['quadrant'] == 'Hidden Gem').sum()):,} |",
+        f"| {len(pd.read_csv(config.REPORTS_DIR / 'ahp_ranking.csv')):,} |",
+    ]
+    for cell in expected:
+        assert cell in doc, cell

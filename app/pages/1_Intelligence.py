@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app import _theme as theme
-from app._common import data_key, load_parquet, processed_path
+from app._common import data_key, load_parquet, marketplace_review, processed_path
 from app._components import (
     ITEMS_SOLD_NOTE,
     caption,
@@ -27,8 +27,11 @@ from app._components import (
     set_page,
     show,
     subtitle,
+    synthetic_tag,
+    table,
     technical,
 )
+from app._format import fmt_int, fmt_num, fmt_pct
 from src import clickstream, explain, sentiment
 
 set_page("Intelligence")
@@ -41,7 +44,6 @@ _STAGE_LABELS = {
     "checkout": "Reached checkout",
     "purchase": "Purchased",
 }
-_DEVICE_RAMP = ("#9db8d1", "#40729b", "#1F4E79")
 
 
 @st.cache_data(show_spinner="Computing clickstream metrics…")
@@ -83,10 +85,11 @@ def _devices(by_device: pd.DataFrame) -> None:
     fig = px.bar(
         long, x="stage", y="sessions", color="device", barmode="group",
         category_orders={"stage": [_STAGE_LABELS[s] for s in _STAGES]},
-        color_discrete_sequence=list(_DEVICE_RAMP),
+        color_discrete_sequence=list(theme.DEVICE_COLORS),
         labels={"stage": "", "sessions": "Sessions", "device": "Device"},
     )
     fig.update_layout(height=340)
+    fig.update_traces(marker_line_width=0)
     show(fig)
 
 
@@ -131,19 +134,14 @@ def _call_details(agents: pd.DataFrame) -> None:
     )
     fig.update_layout(height=380, coloraxis_colorbar={"title": "Mean sentiment"})
     show(fig)
-    st.dataframe(
+    caption("One bubble per agent (hover for the agent id). Bubble size is the number of calls "
+            "the agent handled; colour is the agent's mean sentiment, from red (negative) "
+            "through grey to blue (positive).")
+    table(
         agents.drop(columns=["silence_pct_display"]),
-        hide_index=True,
-        width="stretch",
-        column_config={
-            "agent_id": "Agent",
-            "mean_sentiment": st.column_config.NumberColumn("Mean sentiment", format="%.3f"),
-            "mean_hold_seconds": st.column_config.NumberColumn("Mean hold (s)", format="%.1f"),
-            "mean_silence_pct": st.column_config.NumberColumn("Mean silence", format="percent"),
-            "negative_call_share": st.column_config.NumberColumn(
-                "Negative share", format="percent"
-            ),
-            "call_count": "Calls",
+        {
+            "mean_sentiment": "num3", "mean_hold_seconds": "num1", "mean_silence_pct": "pct",
+            "negative_call_share": "pct", "call_count": "int",
         },
     )
 
@@ -157,15 +155,19 @@ def render() -> None:
     )
     late = float(fact["is_late"].mean())
     orders = fact["order_id"].nunique()
-    subtitle(_SUBTITLE, f"{orders:,} delivered orders; {late * 100:.1f}% of items arrived late.")
+    review_per_order, review_per_item = marketplace_review()
+    subtitle(_SUBTITLE,
+             f"{fmt_int(orders)} delivered orders; {fmt_pct(late, 1)} of items arrived late.")
     kpis([
-        ("Delivered orders", f"{orders:,}", None),
+        ("Delivered orders", fmt_int(orders), None),
         ("Item revenue", money_short(float(fact["price"].sum())),
          "Sum of item prices in Brazilian reais, excluding freight."),
-        ("Late-delivery rate", f"{late * 100:.2f}%",
+        ("Late-delivery rate", fmt_pct(late, 2),
          "Share of order items delivered after the estimated date."),
-        ("Average review score", f"{fact['review_score'].mean():.2f} / 5",
-         "Mean of orders that have a review (about 0.75% have none)."),
+        ("Average review score", f"{fmt_num(review_per_order, 2)} / 5",
+         "Mean review per reviewed order: one review per order, counted once for each seller "
+         "in the order. Counting a review once for every item of its order would give "
+         f"{fmt_num(review_per_item, 2)}; about 0.75% of items have no review."),
     ])
     section("Where visitors drop out", synthetic=True)
     show(_funnel_chart(funnel))
@@ -178,29 +180,22 @@ def render() -> None:
             "audio and no speech recognition are involved.")
 
     with technical():
-        st.markdown("**Funnel table**")
-        st.dataframe(
-            funnel.rename(columns={
-                "sessions": "Sessions",
-                "stage_conversion": "Stage conversion",
-                "overall_conversion": "Overall conversion",
-            }),
-            width="stretch",
-            column_config={
-                "Stage conversion": st.column_config.NumberColumn(format="percent"),
-                "Overall conversion": st.column_config.NumberColumn(format="percent"),
-            },
+        section("Funnel table", synthetic=True)
+        table(
+            funnel.rename(index=_STAGE_LABELS).rename_axis("Step").reset_index(),
+            {"sessions": "int", "stage_conversion": "pct", "overall_conversion": "pct"},
         )
         st.markdown(
-            f"Bounce rate: **{bounce * 100:.1f}%** of sessions view one page and leave. "
-            f"Cart abandonment: **{abandonment * 100:.1f}%** of sessions that add to the cart "
-            "never buy."
+            f"Bounce rate: **{fmt_pct(bounce, 2)}** of sessions view one page and leave. "
+            f"Cart abandonment: **{fmt_pct(abandonment, 2)}** of sessions that add to the cart "
+            f"never buy. {synthetic_tag()}",
+            unsafe_allow_html=True,
         )
         section("Funnel by device", synthetic=True)
         _devices(by_device)
         section("Call sentiment by agent", synthetic=True)
         _call_details(agents)
-        note(f"KPIs are computed live from {len(fact):,} real Olist order items. "
+        note(f"KPIs are computed live from {fmt_int(len(fact))} real Olist order items. "
              + ITEMS_SOLD_NOTE)
 
 

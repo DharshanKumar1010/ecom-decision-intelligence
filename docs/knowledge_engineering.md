@@ -27,12 +27,12 @@ Per-seller order counts across all 2,970 sellers:
 | 90th | 83 |
 | 95th | 151 |
 
-30 orders sits at the **77.9th percentile** of all sellers — i.e. it selects
+30 items sold sits at the **77.9th percentile** of all sellers — i.e. it selects
 the top ~22.9% (681 of 2,970) as "established" for the main AHP ranking.
 This was chosen to keep the established-seller ranking restricted to sellers
 with enough of a track record that an average-review/on-time-rate estimate
 is meaningful, while still leaving a majority of the marketplace (the other
-77%) for the lower-threshold discovery pass. 30 orders is also comfortably
+77%) for the lower-threshold discovery pass. 30 items sold is also comfortably
 above the point (order_volume >= ~10-15) where an empirical rate like
 `on_time_rate` stops being dominated by single-order noise.
 
@@ -43,10 +43,10 @@ well under the `AHP_CR_THRESHOLD = 0.10` flag.
 
 ## 2. Discovery AHP-eligibility threshold: `DISCOVERY_MIN_ORDERS = 5`
 
-5 orders sits at the **41.9th percentile** — it makes 1,864 of 2,970 sellers
-(62.8%) eligible for a quality (AHP) score, versus 22.9% at the 30-order
+5 items sold sits at the **41.9th percentile** — it makes 1,864 of 2,970 sellers
+(62.8%) eligible for a quality (AHP) score, versus 22.9% at the 30-item
 established-seller threshold. This is the whole point of the discovery
-feature (CLAUDE.md section 7.7.1): a seller needs *some* orders for an
+feature (CLAUDE.md section 7.7.1): a seller needs *some* items sold for an
 average review score and on-time rate to mean anything at all, but 5 is low
 enough that small/newer sellers — the ones a "sort by volume" view would
 bury — are actually included, rather than only re-running the same
@@ -54,14 +54,14 @@ established-seller list at a different name.
 
 ## 3. Discovery confidence cutoff: `DISCOVERY_CONFIDENCE_MIN_ORDERS = 15`
 
-15 orders sits at the **66.1st percentile** of all sellers. Among the 1,864
-AHP-eligible (>=5 order) sellers specifically, the median order count is
-**18** — meaning the 15-order confidence cutoff sits just below the middle
+15 items sold sits at the **66.1st percentile** of all sellers. Among the 1,864
+AHP-eligible (>=5 items sold) sellers specifically, the median items-sold count is
+**18** — meaning the 15-item confidence cutoff sits just below the middle
 of the eligible population, splitting it into **818 "low" confidence rows
 (43.9%) and 1,046 "normal" (56.1%)** on the last real run. This threshold
-was picked so "low confidence" genuinely means "below-typical order count
+was picked so "low confidence" genuinely means "below-typical items sold
 for an eligible seller" (not an arbitrary round number): a seller just past
-the 5-order eligibility floor is treated with reduced confidence until they
+the 5-item eligibility floor is treated with reduced confidence until they
 clear roughly the eligible population's own midpoint.
 
 ## 4. Discovery quadrant thresholds: median split (both axes)

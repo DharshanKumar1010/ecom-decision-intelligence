@@ -47,8 +47,10 @@ Each page: what to click, then two sentences to say. Roughly 45 seconds each.
 > "On orders it never saw, a random forest ranks a late order above an on-time one about 74%
 > of the time, where 50% is a coin flip. Its strongest signal is the month of purchase, then
 > the seller's own past lateness and the distance, which shows what the model leans on, not
-> what causes lateness. The small chart below shows which single nudge moves the predicted
-> risk most."
+> what causes lateness, and the page notes it may reflect busy or disrupted periods. It also
+> says that on a forward-looking test no model did meaningfully better than chance, so this is
+> a ranking, not a forecast. The small chart below shows which single nudge moves the
+> predicted risk most."
 
 ### 3. Choice: "Which established sellers are best overall?"
 
@@ -74,7 +76,7 @@ tables.
 
 *Click:* use **Try an example** to switch outcomes; open **Technical details**.
 
-> "The page opens on a seller with at least 5 items sold where a real rule fired, shows the
+> "The page opens on a seller with at least 5 reviewed orders where a real rule fired, shows the
 > recommendation in one word, and ticks off each condition behind it. Under Technical details
 > are all the rules and what would have to change to get a different outcome. A seller with
 > fewer than 5 items sold is never warned or suspended; it shows Keep with the default rule,
