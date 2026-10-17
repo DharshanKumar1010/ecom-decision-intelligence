@@ -188,7 +188,8 @@ AHP_CR_THRESHOLD: float = 0.10
 # the pool of sellers with >= DISCOVERY_MIN_ORDERS items sold and rounded:
 # review 17.8 -> 18, on-time 25.9 -> 26.
 # Both estimates fall inside AHP_SHRINKAGE_K_RANGE (the range tested in
-# scripts/diagnostic_shrinkage.py); an estimate outside it would use the fallback instead.
+# scripts/diagnostics/diagnostic_shrinkage.py); an estimate outside it would use the fallback
+# instead.
 # Derivation, intermediate variances and sensitivities: docs/knowledge_engineering.md
 # section 8. A test fails if these constants stop matching the data-derived estimate.
 AHP_SHRINKAGE_K_REVIEW: int = 18
@@ -248,30 +249,17 @@ PREDICT_SENSITIVITY_PCTS: tuple[float, ...] = (-0.25, -0.10, 0.10, 0.25)
 PREDICT_N_FOLDS: int = 5
 
 # RandomForest leaf size. Chosen from {1, 5, 20} under the order-grouped out-of-fold protocol
-# (reports/diagnostic_rf_leaf.txt): 20 gave the highest pooled OOF AUC (0.7367 vs 0.7233 for
-# fully grown trees) and a fitted model about 16% of the size. It was chosen on the same folds
-# it is reported on, so the gain is slightly optimistic.
+# (reports/diagnostics/diagnostic_rf_leaf.txt): 20 gave the highest pooled OOF AUC (0.7367 vs
+# 0.7233 for fully grown trees) and a fitted model about 16% of the size. It was chosen on the
+# same folds it is reported on, so the gain is slightly optimistic.
 PREDICT_RF_MIN_SAMPLES_LEAF: int = 20
 
 # --------------------------------------------------------------------------
 # Expert system (src/expert.py + rules/seller_rules.yaml)
 #
-# PROMOTE_LATE_RISK_THRESHOLD (rule R08) and PROMOTE_LATE_RISK_THRESHOLD_STRICT
-# (rule R09) are the two Promote thresholds in rules/seller_rules.yaml (kept
-# here, not just inline in the YAML, since PROMOTE_LATE_RISK_THRESHOLD is
-# also referenced directly by CLAUDE.md section 7.7.2's rule spec and by
-# discovery.py's docs). expert.py reads the actual values from the YAML
-# file, not from these constants — they exist for documentation/reference,
-# mirroring the YAML.
-#
-# PROMOTE_LATE_RISK_THRESHOLD_STRICT was added in Stage 3.5 (RandomForest
-# adopted as primary model) when R09's original 0.474 threshold — calibrated
-# against the old LR model's ~0.31-0.88 late_risk range — became
-# non-discriminating under RandomForest's full 0.0-1.0 range (fired on
-# 100% of Hidden Gems). Recalibrated to ~0.05, the 25th percentile of
-# avg_late_risk AMONG Hidden Gems specifically (not all sellers) — see
-# docs/knowledge_engineering.md and BUILD_LOG.md.
+# Every rule threshold lives in rules/seller_rules.yaml and nowhere else. Two unused
+# copies of the Promote cutoffs used to sit here; one had drifted (0.05 against the
+# file's current value), so both were removed. The reasoning behind each cutoff is in
+# docs/knowledge_engineering.md; the current values and fire counts are in
+# reports/RESULTS.md.
 # --------------------------------------------------------------------------
-
-PROMOTE_LATE_RISK_THRESHOLD: float = 0.3
-PROMOTE_LATE_RISK_THRESHOLD_STRICT: float = 0.05

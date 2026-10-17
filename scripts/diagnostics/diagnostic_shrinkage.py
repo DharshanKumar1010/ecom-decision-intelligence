@@ -1,7 +1,10 @@
 """One-off diagnostic: would shrinkage or a rate-based popularity fix the hidden-gem ranking?
 
+CURRENT: re-running it reproduces the committed report exactly (checked in Stage 8); it is the
+evidence for the shrinkage strengths in config.py.
+
 NOT part of the pipeline: not wired into `run_all.py`, nothing adopted, no model fitted.
-Run directly: `python scripts/diagnostic_shrinkage.py` (a few seconds).
+Run directly: `python scripts/diagnostics/diagnostic_shrinkage.py` (a few seconds).
 
 Problem. By construction a Hidden Gem has fewer orders than the popularity median, and
 "low confidence" is under `DISCOVERY_CONFIDENCE_MIN_ORDERS`, so the top of the AHP ranking
@@ -21,8 +24,8 @@ Part 2 (rate popularity). Popularity as orders per active month (first to last
 the CURRENT quality score and quality split line; only the popularity axis changes.
 
 Reuses `src.ahp` and `src.discovery` functions unmodified. Writes
-`reports/diagnostic_shrinkage.txt`. "Order" counts here are order items, as everywhere in
-the project.
+`reports/diagnostics/diagnostic_shrinkage.txt`. "Order" counts here are order items, as
+everywhere in the project.
 """
 
 from __future__ import annotations
@@ -34,7 +37,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.ahp import (  # noqa: E402
     compute_weights,
@@ -201,11 +204,12 @@ def build_report() -> str:
 
 
 def main() -> None:
-    """Print the report and write it to `reports/diagnostic_shrinkage.txt`."""
+    """Print the report and write it to `reports/diagnostics/diagnostic_shrinkage.txt`."""
     report = build_report()
     print(report)  # noqa: T201 - one-off diagnostic script
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    (REPORTS_DIR / "diagnostic_shrinkage.txt").write_text(report + "\n", encoding="utf-8")
+    (REPORTS_DIR / "diagnostics").mkdir(parents=True, exist_ok=True)
+    report_path = REPORTS_DIR / "diagnostics" / "diagnostic_shrinkage.txt"
+    report_path.write_text(report + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

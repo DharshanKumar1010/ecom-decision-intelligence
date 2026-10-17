@@ -21,9 +21,6 @@ from streamlit.testing.v1 import AppTest
 from app import _theme as theme
 from app._common import (
     DATA_CATALOG,
-    REVIEW_TOKEN,
-    model_review_flag,
-    parse_cv_summary,
     quadrant_thresholds,
 )
 from app._components import money_short, short_id
@@ -369,14 +366,26 @@ def test_implementation_default_seller_is_not_the_default_rule(real_outputs: Non
 
 def test_implementation_example_dropdown_replaces_the_buttons(real_outputs: None) -> None:
     recommendations = pd.read_csv(config.REPORTS_DIR / "seller_recommendations.csv")
+    items = pd.read_parquet(config.PROCESSED_DATA_DIR / "SellerFacts.parquet").set_index(
+        "seller_id"
+    )["order_volume"]
     at = _run("Implementation")
     assert not at.button
     for action in ("Warn", "Suspend", "Feature", "Promote", "Keep"):
         at.selectbox(key="impl_example").select(action).run()
         assert not at.exception
-        expected = recommendations.loc[recommendations["action"] == action, "seller_id"].iloc[0]
+        pool = recommendations[recommendations["action"] == action]
+        enough_items = pool["seller_id"].map(items) >= config.DISCOVERY_MIN_ORDERS
+        strong = pool[(pool["rule_id"] != "R12") & enough_items]
+        # The example is the first seller (file order) whose rule fired for a real reason and who
+        # has enough items sold; only if there is none does it fall back to the first of the action.
+        expected = (strong if not strong.empty else pool)["seller_id"].iloc[0]
         assert at.session_state["impl_seller"] == expected
         assert _displayed_action(at) == action
+        if not strong.empty:
+            chosen = recommendations.set_index("seller_id").loc[at.session_state["impl_seller"]]
+            assert chosen["rule_id"] != "R12"
+            assert items[at.session_state["impl_seller"]] >= config.DISCOVERY_MIN_ORDERS
 
 
 def test_implementation_live_engine_matches_batch_for_many_sellers(real_outputs: None) -> None:
@@ -496,62 +505,6 @@ def test_app_loads_no_remote_resources() -> None:
     for path in sources:
         assert not pattern.search(path.read_text(encoding="utf-8")), path
     assert not (APP_DIR / "static").exists()
-
-
-# --------------------------------------------------------------------------
-# Model-review flag: shown only when a real, anchored flag line exists
-# --------------------------------------------------------------------------
-
-
-def test_review_flag_requires_an_anchored_line(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setattr(config, "REPORTS_DIR", tmp_path / "reports")
-    log = tmp_path / "BUILD_LOG.md"
-
-    log.write_text(f"We discuss {REVIEW_TOKEN} in prose only.\n", encoding="utf-8")
-    assert model_review_flag() is None  # a mention is not a flag
-
-    log.write_text(f"notes\nFLAG: {REVIEW_TOKEN} - AUC dropped after retrain\n", encoding="utf-8")
-    assert model_review_flag() == ("BUILD_LOG.md", "AUC dropped after retrain")
-
-    log.write_text("nothing here\n", encoding="utf-8")
-    reports = tmp_path / "reports"
-    reports.mkdir()
-    (reports / "review.txt").write_text(f"STATUS: {REVIEW_TOKEN}\n", encoding="utf-8")
-    assert model_review_flag() == ("review.txt", "")
-
-
-def test_review_line_is_shown_only_when_flagged(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, real_outputs: None
-) -> None:
-    assert "under review" not in _markdown(_run("Design"))  # the real repo has no flag
-    (tmp_path / "BUILD_LOG.md").write_text(f"FLAG: {REVIEW_TOKEN} retrain pending\n",
-                                           encoding="utf-8")
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
-    text = _markdown(_run("Design"))
-    assert "The predictive model is under review" in text and "retrain pending" in text
-
-
-# --------------------------------------------------------------------------
-# Helpers
-# --------------------------------------------------------------------------
-
-
-def test_parse_cv_summary_reads_the_real_report_format() -> None:
-    text = (
-        "header\n\nMean +/- std across folds:\n"
-        "  LogisticRegression   0.6247 +/- 0.0083\n"
-        "  DecisionTree         0.6870 +/- 0.0083\n"
-        "  RandomForest         0.7928 +/- 0.0051\n\nnext section\n"
-    )
-    assert parse_cv_summary(text) == {
-        "LogisticRegression": (0.6247, 0.0083),
-        "DecisionTree": (0.6870, 0.0083),
-        "RandomForest": (0.7928, 0.0051),
-    }
-    assert parse_cv_summary("no such block here") == {}
 
 
 # --------------------------------------------------------------------------

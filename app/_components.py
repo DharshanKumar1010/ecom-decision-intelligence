@@ -17,7 +17,6 @@ import streamlit as st
 from streamlit.errors import StreamlitPageNotFoundError
 
 from app import _theme as theme
-from app._common import model_review_flag
 
 MISSING_FILE_HELP = (
     "Run `python run_all.py` from the project root to generate the pipeline "
@@ -148,18 +147,6 @@ def page_link_or_label(target: str, label: str) -> None:
         st.page_link(target, label=label)
     except StreamlitPageNotFoundError:
         st.markdown(label)
-
-
-def review_line() -> None:
-    """One plain line under the subtitle, only if the logs carry the model-review flag."""
-    flag = model_review_flag()
-    if flag:
-        source, reason = flag
-        note(
-            f"The predictive model is under review (see {source})"
-            + (f": {reason}." if reason else ".")
-            + " Treat risk scores as provisional."
-        )
 
 
 def run_page(render: Callable[[], None]) -> None:

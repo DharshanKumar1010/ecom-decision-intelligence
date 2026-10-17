@@ -1,4 +1,4 @@
-.PHONY: setup data models export run app test lint check
+.PHONY: setup data models export load-sql run app test lint check
 
 VENV_PY := .venv/bin/python
 ifeq ($(OS),Windows_NT)
@@ -19,9 +19,15 @@ models:
 	$(VENV_PY) -m src.predict
 	$(VENV_PY) -m src.ahp
 	$(VENV_PY) -m src.discovery
+	$(VENV_PY) -m src.expert
 
 export:
 	$(VENV_PY) -m src.export_sql
+
+# Loads data/export/*.csv into SQL Server (owner-authorised exception; see src/load_sql.py).
+# For --dry-run, --verify-only or --only <table> run python -m src.load_sql directly.
+load-sql:
+	$(VENV_PY) -m src.load_sql
 
 run:
 	$(VENV_PY) run_all.py

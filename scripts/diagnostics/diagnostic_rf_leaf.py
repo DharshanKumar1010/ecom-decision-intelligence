@@ -1,7 +1,11 @@
 """One-off diagnostic: how much does RandomForest `min_samples_leaf` matter, and what does it cost?
 
+CURRENT: re-running it reproduces the committed report exactly (checked in Stage 8); it is the
+evidence for the forest leaf size of 20 (config.PREDICT_RF_MIN_SAMPLES_LEAF).
+
 NOT part of the pipeline: not wired into `run_all.py`; the only file written is
-`reports/diagnostic_rf_leaf.txt`. Run directly: `python scripts/diagnostic_rf_leaf.py`
+`reports/diagnostics/diagnostic_rf_leaf.txt`. Run directly:
+`python scripts/diagnostics/diagnostic_rf_leaf.py`
 (slow: 5 RandomForest fits for each of 3 leaf sizes).
 
 Protocol: the same order-grouped 5-fold out-of-fold protocol `src.predict` uses
@@ -29,7 +33,7 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score
 from sklearn.pipeline import Pipeline
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.config import PROCESSED_DATA_DIR, REPORTS_DIR  # noqa: E402
 from src.predict import (  # noqa: E402
@@ -123,7 +127,8 @@ def main() -> None:
                  f"{verdict or 'none'}")
     report = "\n".join(lines)
     print(report)  # noqa: T201
-    (REPORTS_DIR / "diagnostic_rf_leaf.txt").write_text(report + "\n", encoding="utf-8")
+    report_path = REPORTS_DIR / "diagnostics" / "diagnostic_rf_leaf.txt"
+    report_path.write_text(report + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

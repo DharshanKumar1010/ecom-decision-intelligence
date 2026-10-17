@@ -1,3 +1,5 @@
+HISTORICAL: produced with random-fold CV over item rows and a fully grown forest (leaf 1), inflated by sibling leakage; superseded by the order-grouped Stage 6 evaluation (reports/oof_metrics.json).
+
 Diagnostic: RandomForest 5-fold CV stability check (one-off, NOT part of the pipeline)
 ==========================================================================================
 

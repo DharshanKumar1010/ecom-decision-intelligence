@@ -1,8 +1,11 @@
 """One-off diagnostic: does RandomForest's lead survive a forward-looking (temporal) split?
 
+CURRENT: regenerated in Stage 8 with the current model settings (forest leaf 20); the forward-
+looking result quoted in the docs comes from this report.
+
 NOT part of the pipeline: not wired into `run_all.py`; the only file written is
-`reports/diagnostic_temporal.txt`. Run directly: `python scripts/diagnostic_temporal.py`
-(slow: two RandomForest fits).
+`reports/diagnostics/diagnostic_temporal.txt`. Run directly:
+`python scripts/diagnostics/diagnostic_temporal.py` (slow: two RandomForest fits).
 
 Train on the earliest 80% of ORDERS by `order_purchase_timestamp` and test on the latest 20%
 (all items of an order follow their order, so no order is in both sets and no test order is
@@ -24,7 +27,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.config import ALLOWED_FEATURES, PROCESSED_DATA_DIR, REPORTS_DIR  # noqa: E402
 from src.predict import (  # noqa: E402
@@ -115,8 +118,9 @@ def main() -> None:
         lines.append(f"{label:<52}{lr:>8.4f}{dt:>8.4f}{rf:>8.4f}{rf - lr:>+8.4f}{rf - dt:>+8.4f}")
     report = "\n".join(lines)
     print(report)  # noqa: T201 - one-off diagnostic script
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    (REPORTS_DIR / "diagnostic_temporal.txt").write_text(report + "\n", encoding="utf-8")
+    (REPORTS_DIR / "diagnostics").mkdir(parents=True, exist_ok=True)
+    report_path = REPORTS_DIR / "diagnostics" / "diagnostic_temporal.txt"
+    report_path.write_text(report + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

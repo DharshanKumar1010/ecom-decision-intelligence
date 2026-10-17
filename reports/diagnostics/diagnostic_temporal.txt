@@ -4,5 +4,5 @@ train = earliest 80% of orders: 88,294 items, 2016-09-15 to 2018-05-26, late rat
 test  = latest 20% of orders: 21,895 items, 2018-05-26 to 2018-08-29, late rate 5.2021%
 
 features                                                  LR      DT      RF   RF-LR   RF-DT
-all 12 features                                       0.3975  0.5049  0.5210 +0.1235 +0.0161
-without order_month and day_of_week (10 features)     0.4007  0.4188  0.4402 +0.0396 +0.0215
+all 12 features                                       0.3975  0.5049  0.5178 +0.1203 +0.0129
+without order_month and day_of_week (10 features)     0.4007  0.4188  0.4198 +0.0191 +0.0010

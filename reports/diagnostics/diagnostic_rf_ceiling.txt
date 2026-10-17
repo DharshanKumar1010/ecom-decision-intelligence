@@ -1,3 +1,5 @@
+HISTORICAL: produced with a random item split and a fully grown forest (leaf 1), against logistic-regression and decision-tree constants from that split; superseded by the order-grouped Stage 6 evaluation (reports/oof_metrics.json).
+
 Diagnostic: RandomForest signal-ceiling check (one-off, NOT part of the pipeline)
 ====================================================================================
 

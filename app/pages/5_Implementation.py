@@ -56,8 +56,23 @@ def _num(value: object) -> float | None:
     return None if pd.isna(value) else float(value)
 
 
+def _example_order(facts: pd.DataFrame, recommendations: pd.DataFrame) -> pd.DataFrame:
+    """Recommendations reordered so "Try an example" lands on a meaningful seller first.
+
+    Sellers with enough items sold (`config.DISCOVERY_MIN_ORDERS`) and a rule other than the
+    default come first, then well-evidenced default-rule sellers, then thin ones; file order
+    is kept inside each group, so the choice is deterministic.
+    """
+    items = dict(zip(facts["seller_id"], facts["order_volume"], strict=True))
+    thin = recommendations["seller_id"].map(items).fillna(0) < config.DISCOVERY_MIN_ORDERS
+    default_rule = recommendations["rule_id"] == _DEFAULT_RULE
+    rank = thin.astype(int) * 2 + default_rule.astype(int)
+    ranked = recommendations.assign(_rank=rank).sort_values("_rank", kind="stable")
+    return ranked.drop(columns="_rank")
+
+
 def _pick_example() -> None:
-    """Jump to the first seller whose batch recommendation is the chosen action."""
+    """Jump to the first seller (in `_example_order`) whose recommendation is the chosen action."""
     action = st.session_state.get(_EXAMPLE_KEY, _NO_EXAMPLE)
     batch = st.session_state.get("_impl_batch")
     if action != _NO_EXAMPLE and batch is not None:
@@ -74,9 +89,17 @@ def _lookup() -> None:
 
 
 def _default_seller(facts: pd.DataFrame, recommendations: pd.DataFrame) -> str:
-    """A first seller worth looking at: an actionable outcome from a real rule, not the default."""
+    """A first seller worth looking at: a real rule fired (not the default) for a seller with
+    enough items sold (`config.DISCOVERY_MIN_ORDERS`) for the outcome to mean something.
+
+    Prefers an actionable outcome (anything but Keep); falls back step by step, so the page
+    always opens on some seller.
+    """
+    enough_items = facts["order_volume"] >= config.DISCOVERY_MIN_ORDERS
+    well_evidenced = set(facts.loc[enough_items, "seller_id"])
     in_facts = recommendations["seller_id"].isin(set(facts["seller_id"]))
     informative = recommendations[(recommendations["rule_id"] != _DEFAULT_RULE) & in_facts]
+    informative = informative[informative["seller_id"].isin(well_evidenced)]
     actionable = informative[informative["action"] != "Keep"]
     for pool in (actionable, informative, recommendations[in_facts]):
         if not pool.empty:
@@ -87,7 +110,7 @@ def _default_seller(facts: pd.DataFrame, recommendations: pd.DataFrame) -> str:
 def _selector(facts: pd.DataFrame, recommendations: pd.DataFrame) -> str:
     seller_ids = facts["seller_id"].tolist()
     st.session_state[_SELLER_IDS] = frozenset(seller_ids)
-    st.session_state["_impl_batch"] = recommendations
+    st.session_state["_impl_batch"] = _example_order(facts, recommendations)
     orders = dict(zip(facts["seller_id"], facts["order_volume"], strict=True))
     st.session_state.setdefault(_SELLER_KEY, _default_seller(facts, recommendations))
     st.session_state.setdefault(_EXAMPLE_KEY, _NO_EXAMPLE)

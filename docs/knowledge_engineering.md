@@ -8,6 +8,13 @@ unless stated otherwise. If the pipeline is rerun on a different data
 snapshot, these numbers should be recomputed and this file updated —
 CLAUDE.md section 1 forbids quoting a number that wasn't actually measured.
 
+**How to read this file.** Sections 5 and 5b, 8, 8b and 9 are the history of each recalibration
+pass and quote the values of their day (for example R01 at 0.178 or 0.416); they are labelled
+as such and are not current. The current rule thresholds, with their fire counts, are in
+section 6 and `reports/RESULTS.md`; the latest change (a minimum of 5 items sold for Warn and
+Suspend) is section 10. The rule file `rules/seller_rules.yaml` is the only authority for a
+threshold's value.
+
 ## 1. AHP established-sellers threshold: `AHP_MIN_ORDERS = 30`
 
 Per-seller order counts across all 2,970 sellers:
@@ -80,7 +87,7 @@ LR-primary at the time) and widened the range slightly to 0.310-0.884; R08
 still fired on 0, R09 (still `0.474`) fired on 388/478 Hidden Gems. **Stage
 3.5 adopted RandomForest as the primary model** (CLAUDE.md section 18,
 `BUILD_LOG.md`), whose `late_risk` spans the FULL 0.0-1.0 range — a much
-wider, better-calibrated signal, but it flipped which rule was
+wider-ranging signal, but it flipped which rule was
 discriminating: R08 jumped to firing on 472/478 (98.7%), and R09's `0.474`
 became non-discriminating at 478/478 (100%, since RF's max observed
 `avg_late_risk` among Hidden Gems is well below 0.474). This section
@@ -258,38 +265,42 @@ sellers no longer reaching R08/R09 because a higher-priority Suspend/Warn
 rule now catches them first); Feature 256 -> 233; Warn 244 -> 270;
 Suspend 60 -> 167.
 
-## 6. Remaining expert-system rule thresholds (`rules/seller_rules.yaml`)
+## 6. Rule thresholds (`rules/seller_rules.yaml`)
 
-**All thresholds below are current as of the Stage 3.5 recalibration
-(section 5, section 5b)** — R08/R09 use RandomForest-Hidden-Gem-specific
-percentiles; R01/R03/R06/R10 use RandomForest-all-sellers percentiles;
-R02/R05/R11 use the unchanged empirical `late_rate` distribution. The
-"Real matches" column below reflects the OLD LR-era pipeline run for rules
-not affected by this doc's two recalibration passes' re-verification —
-where a rule WAS recalibrated, see section 5/5b for the current real count
-instead (R01: 165, R03: 180, R06: 164, R08: 272, R09: 58, R10: 104).
+The rule file is the single source of every threshold; this table is generated from it and
+from the pipeline outputs, and `tests/test_results.py` fails if a condition here differs from the
+file. Fire counts come from `reports/seller_recommendations.csv` ("fires": the rule that gave the
+seller's final recommendation) and from running every rule against `SellerFacts.parquet`
+("matches": all conditions true, whatever the priority). The same counts are in `reports/RESULTS.md`.
 
-All checked against the same `SellerFacts.parquet` run (2,970 sellers;
-`avg_review` percentiles: min 1.0, 10th 3.2, 25th 3.90, 50th 4.27, 75th 4.70,
-90th-95th 5.0; `order_volume` percentiles as in section 1;
-`late_rate` percentiles: 50th 0.0, 75th 0.10, 90th 0.222, 95th 0.337;
-`ahp_score` percentiles as in section 1's established-seller pool extended
-to the 5-order-eligible pool: 10th 0.604, 25th 0.669, 50th 0.716, 75th
-0.755, 90th 0.789 at Stage 3.5; after the Stage 5 order-level shrinkage they are 0.549, 0.601,
-0.644, 0.681 and 0.711, see section 8).
+Each percentile-intent threshold was set at the percentile of the **reference population** named
+in the third column, not always of all sellers. R01 and R03 use the 1,864 sellers with at least 5
+items sold because that is the group they apply to since the Stage 8 minimum-evidence rule
+(section 10). R06 and R10 keep the median over all 2,970 sellers (R10 is gated at 5 items sold
+but its median was set before the gate and was deliberately left).
 
-| Rule | Threshold | Justification | Real matches |
-|---|---|---|---|
-| R01 Suspend | `avg_late_risk > 0.53` (~75th pct) AND `avg_review < 3.5` (between 10th/25th pct) | Combines a top-quartile risk signal with a clearly-below-average review score — CLAUDE.md's own example rule, re-thresholded to this data's real percentiles instead of its illustrative 0.6/3.0. | 94 sellers |
-| R02 Suspend | `late_rate > 0.4` AND `order_volume >= 10` | An empirical (not predicted) late rate above 40% is a severe, directly-observed failure; requiring >=10 orders rules out a fluke from 1-2 late shipments. | 7 sellers |
-| R06 Feature | `ahp_score >= 0.711` (90th pct; was 0.789 before the Stage 5 shrinkage, section 8) AND `avg_late_risk < 0.503` (median) | Top-decile AHP quality with at-or-below-median predicted risk — a proven, low-risk top performer. | 107 sellers |
-| R07 Feature | `avg_review >= 4.3` AND `order_volume >= 83` (90th pct) | High-volume sellers (90th percentile+) have a *lower* mean review (4.08) than the overall population (4.27 median) in this data, so requiring 4.3 specifically picks out sellers sustaining quality at scale rather than everyone at that volume. | 69 sellers |
-| R03 Warn | `avg_late_risk > 0.55` (~90th pct) | A single, wide risk-only caution signal, deliberately set higher than R01's combined-condition threshold since it fires alone. | 226 sellers |
-| R04 Warn | `avg_review < 3.5` AND `order_volume >= 5` | Same review cutoff as R01 (10th-25th pct band) without the risk condition, gated on order_volume >= 5 so it reflects a pattern, not one bad review. | 177 sellers |
-| R05 Warn | `late_rate > 0.25` (90th pct) AND `order_volume >= 5` | A softer, single-condition version of R02's empirical-lateness signal. | 105 sellers |
-| R10 Keep | `avg_late_risk <= 0.503` AND `avg_review >= 4.27` (both median; the review cutoff is now 4.28, section 8b) AND `order_volume >= 5` | At-or-better-than-median on both risk and reviews, with a real order history — no signal to act on. | 446 sellers |
-| R11 Keep | `ahp_score >= 0.549` (10th pct; was 0.604 before the Stage 5 shrinkage, section 8) AND `late_rate <= 0.10` (75th pct) | Excludes only the bottom decile of AHP quality and the worst quartile of empirical lateness — a wide "no red flags" net. | 1,264 sellers |
-| R12 (default) | none (`if: []`) | Every seller must get a recommendation (CLAUDE.md section 7.5); catches sellers with too little data to trigger any of the above (frequently order_volume < 5, so no `ahp_score`). | 1,228 sellers (41.4% of all sellers) |
+Distributions the thresholds were checked against (2,970 sellers unless stated): `avg_review`
+(2,965 sellers with a reviewed order; one review per distinct order) minimum 1.0, 10th 3.33, 25th
+3.97, median 4.28, 75th 4.67, 90th 5.0; `late_rate` median 0, 75th 0.10, 90th 0.222, 95th 0.337;
+`avg_late_risk` over all sellers 25th 0.277, median 0.339, 75th 0.416, 90th 0.501 and over the
+1,864 sellers with at least 5 items sold 75th 0.412, 90th 0.476; `ahp_score` (1,864 sellers with
+a score, after the Stage 5 order-level shrinkage, section 8) 10th 0.549, 25th 0.601, median 0.644,
+75th 0.681, 90th 0.711; `order_volume` (items sold) median 8, 75th 26, 90th 83.
+
+| Rule | Conditions | Reference population | Matches | Fires | Why this level |
+|---|---|---|---|---|---|
+| R01 Suspend | `avg_late_risk > 0.412 and avg_review < 3.5 and order_volume >= 5` | sellers with >= 5 items sold | 70 | 70 | Top quartile of predicted risk among sellers with at least 5 items sold, together with a clearly below-average review (between the 10th and 25th percentile). Risk alone is not enough to suspend. |
+| R02 Suspend | `late_rate > 0.4 and order_volume >= 10` | sellers with >= 10 items sold | 7 | 6 | An observed (not predicted) late rate above 40% is a severe failure; 10 or more items sold rules out a fluke from one or two late shipments. A fixed severity level, not a percentile. |
+| R06 Feature | `ahp_score >= 0.711 and avg_late_risk < 0.339` | all sellers | 137 | 137 | Top decile of AHP quality with at-or-below-median predicted risk: a proven, low-risk top performer. The median is taken over all sellers. |
+| R07 Feature | `avg_review >= 4.3 and order_volume >= 83` | sellers with >= 83 items sold | 78 | 37 | High volume (90th percentile of items sold) sustained alongside a high average review; 4.3 is a little above the median seller. |
+| R09 Promote | `is_hidden_gem == True and avg_late_risk < 0.252` | hidden gems | 111 | 104 | Hidden gem in roughly the lowest-risk quartile of hidden gems: the high-confidence Promote tier. |
+| R08 Promote | `is_hidden_gem == True and avg_late_risk < 0.3` | hidden gems | 222 | 106 | Hidden gem with predicted risk below the original literal cut-off of 0.3: the broader, lower-confidence Promote tier. R09 is a strict subset of it. |
+| R03 Warn | `avg_late_risk > 0.476 and order_volume >= 5` | sellers with >= 5 items sold | 184 | 144 | Top 10% of predicted risk among sellers with at least 5 items sold: on its own a caution signal, set above R01 because it fires without a review condition. |
+| R04 Warn | `avg_review < 3.5 and order_volume >= 5` | sellers with >= 5 items sold | 137 | 66 | Average review below 3.5 with at least 5 items sold: a pattern, not one bad review. |
+| R05 Warn | `late_rate > 0.25 and order_volume >= 5` | sellers with >= 5 items sold | 105 | 31 | More than a quarter of a seller's own items arrived late (about the 90th percentile), with at least 5 items sold. |
+| R10 Keep | `avg_late_risk <= 0.339 and avg_review >= 4.28 and order_volume >= 5` | sellers with >= 5 items sold | 485 | 170 | At-or-better-than-median predicted risk (all sellers) and reviews (median 4.28) with a real history of 5 or more items: nothing to act on. |
+| R11 Keep | `ahp_score >= 0.549 and late_rate <= 0.1` | all sellers | 1,288 | 701 | AHP quality above the bottom decile and an observed late rate at or below the 75th percentile: a wide no-red-flags net. |
+| R12 Keep | `(always)` | all sellers | 2,970 | 1,398 | Default, so every seller gets a recommendation. Catches every seller with fewer than 5 items sold, plus sellers no stronger rule matched. |
 
 **Priority ladder** (rationale for the ordering, not just the numbers):
 Suspend (100, 98) > Feature (90, 88) > Promote (80, 78) > Warn (70, 68, 66)
@@ -359,7 +370,7 @@ items sold. Real values (`reports/ahp_prior_strength.csv`, written by `python -m
 
 (4 pool sellers have fewer than two reviewed orders and cannot inform the review variance.)
 Rule: use the rounded estimate if it lies inside the 5 to 30 range tested in
-`scripts/diagnostic_shrinkage.py`, otherwise `k = 10`. Both estimates are inside the range,
+`scripts/diagnostics/diagnostic_shrinkage.py`, otherwise `k = 10`. Both estimates are inside the range,
 so `config.AHP_SHRINKAGE_K_REVIEW = 18` and `AHP_SHRINKAGE_K_ON_TIME = 26`. A test fails if
 these constants stop matching the order-level estimate from the data.
 
@@ -550,7 +561,7 @@ Sections 5 and 5b above describe the late-risk thresholds as they were calibrate
 in-sample RandomForest scores; the thresholds and numbers in this section supersede them.
 
 **Two problems, both measured before anything was changed**
-(`scripts/diagnostic_group_leak.py`, `reports/diagnostic_group_leak.txt`).
+(`scripts/diagnostics/diagnostic_group_leak.py`, `reports/diagnostics/diagnostic_group_leak.txt`).
 
 1. *Sibling leakage.* Items of one order share `is_late` and most features (110,189 items =
    97,811 seller-order pairs = 96,470 orders), but the old split put individual item rows at
@@ -589,12 +600,12 @@ leaf size (below). `reports/oof_metrics.json` carries the comparison:
 | Random forest (leaf 20) | 0.7410 | 0.7367 | 0.7367 / 0.0041 | 0.9346 |
 
 The previous in-sample column for the forest was 1.0000; the old random-fold cross-validation
-that justified adopting the forest (0.7928 / 0.6870 / 0.6247 in `reports/diagnostic_rf_cv.txt`)
+that justified adopting the forest (0.7928 / 0.6870 / 0.6247 in `reports/diagnostics/diagnostic_rf_cv.txt`)
 used item-level random folds and is superseded by this table. The forest still ranks first on
 unseen orders (0.7367 vs 0.6856 vs 0.6241 out-of-fold), so no model was swapped, but its edge
 over the decision tree is about 0.05, not 0.11.
 
-**Forest leaf size** (`scripts/diagnostic_rf_leaf.py`, same grouped OOF protocol, committed
+**Forest leaf size** (`scripts/diagnostics/diagnostic_rf_leaf.py`, same grouped OOF protocol, committed
 config except `min_samples_leaf`):
 
 | `min_samples_leaf` | Pooled OOF AUC | Fold mean / std | vs leaf 1 | Fitted size |
@@ -610,19 +621,21 @@ and adopted **20** (`config.PREDICT_RF_MIN_SAMPLES_LEAF`): highest AUC, smallest
 the end of the grid, so a still larger leaf might do better; none was tried. The leaf was chosen
 on the same folds it is reported on, so the +0.013 is slightly optimistic.
 
-**Forward-looking check** (`scripts/diagnostic_temporal.py`): train on the earliest 80% of
+**Forward-looking check** (`scripts/diagnostics/diagnostic_temporal.py`): train on the earliest 80% of
 orders (88,294 items, 2016-09-15 to 2018-05-26, late rate 8.58%), test on the latest 20%
-(21,895 items, 2018-05-26 to 2018-08-29, late rate 5.20%). Fully grown forest, as in that run:
+(21,895 items, 2018-05-26 to 2018-08-29, late rate 5.20%). Forest at the adopted leaf size of 20.
+The figures first written here (0.5210 and 0.4402) came from a fully grown forest; the script now
+reproduces the numbers below and `reports/diagnostics/diagnostic_temporal.txt` holds them:
 
 | Features | Logistic regression | Decision tree | Random forest | RF - LR | RF - DT |
 |---|---|---|---|---|---|
-| All 12 | 0.3975 | 0.5049 | 0.5210 | +0.1235 | +0.0161 |
-| Without `order_month`, `day_of_week` | 0.4007 | 0.4188 | 0.4402 | +0.0396 | +0.0215 |
+| All 12 | 0.3975 | 0.5049 | 0.5178 | +0.1203 | +0.0129 |
+| Without `order_month`, `day_of_week` | 0.4007 | 0.4188 | 0.4198 | +0.0191 | +0.0010 |
 
 Plainly: **none of the models has useful skill on future months.** Every AUC is near or below
 0.5 (below 0.5 means the ranking is, on average, inverted), the forest is nominally ahead of
-the linear model and the tree, but that is the smallest of three weak results and not
-evidence of a usable forecast. The calendar inputs (`order_month` is the strongest feature on
+the linear model, and level with the tree once the calendar inputs are removed (+0.001), but
+that is the smallest of three weak results and not evidence of a usable forecast. The calendar inputs (`order_month` is the strongest feature on
 unseen orders from the same period) do not carry forward. A caveat on the test period: its late
 rate is lower (5.2%), possibly partly because orders delayed beyond the data extract never
 appear as delivered; that was not verified here.
@@ -690,3 +703,42 @@ literal 0.3 cutoff at the median of the gems (50.8%). R05 rises from 5 to 37 bec
 with a high actual late rate used to be caught first by R03 (their in-sample risk echoed that
 rate) and now reach R05. The late-risk rules fire in more plausible proportions (R01 25%, R03
 10%, R06 and R10 50% of all sellers by construction).
+
+## 10. Minimum evidence for Warn and Suspend (Stage 8)
+
+**Problem.** R01 (Suspend) and R03 (Warn) read `avg_late_risk` with no minimum amount of history,
+so 70 of R01's 137 and 120 of R03's 219 final recommendations were sellers with fewer than 5 items
+sold (median 4 and 3 items), and 104 of R03's 219 Warn sellers had never delivered late. Warning
+or suspending a seller on one or two items is weak decision support. R02, R04, R05 and R10
+already carried an items-sold gate (R02 at 10, the others at 5).
+
+**Change.** R01 and R03 now also require `order_volume >= 5` (items sold), and their `because`
+texts say so. Their risk thresholds are percentile-intent (R01 the 75th percentile, R03 the 90th),
+so they were re-derived on the group the rules now apply to, the 1,864 sellers with at least 5
+items sold: R01 0.416 -> 0.412 and R03 0.501 -> 0.476 (3 decimals, as in earlier passes). No other
+rule, condition or priority changed.
+
+**Sensitivity.** Keeping the all-seller thresholds (0.416 and 0.501) with the new gate would have
+given R01 67 and R03 99 final recommendations instead of 70 and 144: Warn 205 instead of 241,
+Suspend 73 instead of 76, Keep 2,308 instead of 2,269. The eligible-population thresholds were
+adopted because that is the population the rules apply to; lowering R03 to 0.476 moves 39
+sellers with at least 5 items from Keep to Warn and lowering R01 to 0.412 moves 3 from Warn to
+Suspend, a direct consequence of that choice.
+
+**Effect (before -> after).** Suspend 143 -> 76, Warn 325 -> 241, Keep 2,118 -> 2,269, Feature 174
+and Promote 210 unchanged. 232 sellers changed action: Suspend to Keep 70, Warn to Keep 120, Keep
+to Warn 39, Warn to Suspend 3. All 1,106 sellers with fewer than 5 items sold now get the default
+rule R12 ("Keep, pending more data"); 190 of them were on R01 or R03 before. R03 sellers who never
+delivered late fell from 104 to 10, and R01 sellers from 34 to 3. The quadrants, the 437 hidden
+gems, the AHP ranking, the risk scores and the models are byte-identical to before.
+
+**Guards.** `tests/test_expert.py` fails if any Warn or Suspend rule lacks an `order_volume >= 5`
+(or higher) condition, if a seller below 5 items sold has a Warn or Suspend recommendation, or if
+R01 and R03 stop sitting at the 75th and 90th percentile of the sellers they apply to.
+
+**Wording of the reason texts (follow-up).** The `because` texts of R02, R04, R05 and R10 used to say
+"orders" where the rule reads `order_volume` (items sold) or `late_rate` (the share of a seller's
+items delivered late, taken over item rows). They now say "items" or "items sold". Only the text
+changed: no condition, threshold, priority or action, so all 2,970 recommendations keep their rule
+and action and only the 273 sellers on those four rules show new reason wording. The quote of the
+old R05 text in the table of section 5b is history and stays as it was.

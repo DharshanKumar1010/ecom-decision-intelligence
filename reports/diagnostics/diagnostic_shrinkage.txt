@@ -1,3 +1,5 @@
+CURRENT: re-running the script reproduces these numbers exactly (checked in Stage 8). Evidence for the shrinkage strengths in src/config.py.
+
 Diagnostic: shrinkage and rate-based popularity for the hidden-gem ranking
 ==============================================================================
 

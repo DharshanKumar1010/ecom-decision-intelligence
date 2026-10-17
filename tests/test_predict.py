@@ -76,7 +76,7 @@ def fitted_models(feature_table: pd.DataFrame) -> dict[str, Any]:
     """Fit LR/DT/RF exactly once per test module and share across tests.
 
     RandomForest(300 trees, unlimited depth) on ~88K rows is slow to fit
-    (multiple minutes, confirmed by reports/diagnostic_rf_*.txt); fitting it
+    (multiple minutes, confirmed by reports/diagnostics/diagnostic_rf_*.txt); fitting it
     fresh in every test would make the suite impractically slow.
     """
     x_train, x_test, y_train, y_test, _ = _split_and_encode(feature_table)
@@ -481,7 +481,8 @@ def test_random_forest_outperforms_committed_models(fitted_models: dict[str, Any
     dt_auc = _evaluate(fitted_models["dt"], x_test, y_test)["roc_auc"]
     rf_auc = _evaluate(fitted_models["rf"], x_test, y_test)["roc_auc"]
     # Regression guard on the order-grouped split (the earlier random-split evidence in
-    # reports/diagnostic_rf_cv.txt overstated RF's lead; see reports/diagnostic_group_leak.txt).
+    # reports/diagnostics/diagnostic_rf_cv.txt overstated RF's lead; see
+    # reports/diagnostics/diagnostic_group_leak.txt).
     assert rf_auc > dt_auc > lr_auc
 
 

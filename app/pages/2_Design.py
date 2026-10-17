@@ -4,7 +4,7 @@ Honesty note: every quality number here comes from order-grouped evaluation (no 
 both train and test): the held-out metrics in `reports/model_metrics.json` and the
 out-of-fold metrics in `reports/oof_metrics.json`. `LatePredictions.parquet` is out-of-fold, but
 this page still does not derive lift, gain or "catches X% of late orders" from it; the
-temporal check (`reports/diagnostic_temporal.txt`) shows the models have little skill on
+temporal check (`reports/diagnostics/diagnostic_temporal.txt`) shows the models have little skill on
 future periods, so no claim here goes beyond ranking quality on unseen orders.
 """
 
@@ -34,7 +34,6 @@ from app._components import (
     kpis,
     note,
     page_header,
-    review_line,
     run_page,
     section,
     set_page,
@@ -294,7 +293,6 @@ def render() -> None:
     cv = _cv()
 
     subtitle(_SUBTITLE, explain.design_answer(auc, base_rate))
-    review_line()
     kpis([
         ("Late-delivery rate", f"{base_rate * 100:.1f}%",
          "Share of order items that arrive after the estimated date."),

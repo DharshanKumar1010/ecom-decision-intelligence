@@ -73,14 +73,25 @@
 # model produces predictions, so their thresholds were checked and
 # confirmed still accurate, not touched. See docs/knowledge_engineering.md
 # for the full percentile check across all twelve rules.
+# Minimum evidence for R01 and R03 (Stage 8): both read avg_late_risk with no order-volume gate,
+# so they fired largely on sellers with one to four items sold (70 of R01's 137 and 120 of
+# R03's 219 firings; 104 of R03's 219 sellers had never delivered late). A warning or a
+# suspension on one or two items is weak decision support, so both now require
+# order_volume >= 5, the same gate R04, R05 and R10 use (R02 needs 10). Because the rules now
+# apply to sellers with >= 5 items sold (1,864 of 2,970), their percentile-intent thresholds
+# were re-derived on THAT population: R01 0.416 -> 0.412 (75th percentile), R03 0.501 ->
+# 0.476 (90th). The all-seller values (0.416, 0.501) kept with the gate would fire on 67 and 99
+# sellers instead of 70 and 144; see docs/knowledge_engineering.md section 10. R06 and R10 keep
+# their all-seller median (0.339); sellers below 5 items sold can now only reach Keep.
 
 - id: R01
   priority: 100
   if:
-    - {fact: avg_late_risk, op: ">", value: 0.416}
+    - {fact: avg_late_risk, op: ">", value: 0.412}
     - {fact: avg_review, op: "<", value: 3.5}
+    - {fact: order_volume, op: ">=", value: 5}
   then: Suspend
-  because: "Predicted late-delivery risk in the top quartile of sellers (recalibrated to RandomForest's real 75th percentile) combined with average reviews below 3.5 — the combination CLAUDE.md's own example rule targets."
+  because: "Predicted late-delivery risk in the top quartile of sellers with at least 5 items sold (the 75th percentile of that group) combined with average reviews below 3.5, and enough items sold that this is a pattern rather than one or two shipments."
 
 - id: R02
   priority: 98
@@ -88,7 +99,7 @@
     - {fact: late_rate, op: ">", value: 0.4}
     - {fact: order_volume, op: ">=", value: 10}
   then: Suspend
-  because: "Over 40% of a seller's own orders arrived late, and there are enough orders (>=10) that this is not a fluke from one or two shipments."
+  because: "Over 40% of a seller's own items arrived late, and there are enough items sold (>=10) that this is not a fluke from one or two shipments."
 
 - id: R06
   priority: 90
@@ -125,9 +136,10 @@
 - id: R03
   priority: 70
   if:
-    - {fact: avg_late_risk, op: ">", value: 0.501}
+    - {fact: avg_late_risk, op: ">", value: 0.476}
+    - {fact: order_volume, op: ">=", value: 5}
   then: Warn
-  because: "Predicted late-delivery risk in roughly the top 10% of sellers (recalibrated to RandomForest's real 90th percentile) on its own is a caution signal even without a confirmed review or volume problem yet."
+  because: "Predicted late-delivery risk in roughly the top 10% of sellers with at least 5 items sold (the 90th percentile of that group) on its own is a caution signal even without a confirmed review or volume problem yet."
 
 - id: R04
   priority: 68
@@ -135,7 +147,7 @@
     - {fact: avg_review, op: "<", value: 3.5}
     - {fact: order_volume, op: ">=", value: 5}
   then: Warn
-  because: "Average review below 3.5 with enough orders (>=5) to be a real pattern rather than one bad review."
+  because: "Average review below 3.5 with enough items sold (>=5) to be a real pattern rather than one bad review."
 
 - id: R05
   priority: 66
@@ -143,7 +155,7 @@
     - {fact: late_rate, op: ">", value: 0.25}
     - {fact: order_volume, op: ">=", value: 5}
   then: Warn
-  because: "More than a quarter of a seller's own orders arrived late (90th-percentile territory), with enough orders to trust the rate."
+  because: "More than a quarter of a seller's own items arrived late (90th-percentile territory), with enough items sold to trust the rate."
 
 - id: R10
   priority: 50
@@ -152,7 +164,7 @@
     - {fact: avg_review, op: ">=", value: 4.28}
     - {fact: order_volume, op: ">=", value: 5}
   then: Keep
-  because: "At-or-below-median predicted risk (recalibrated to RandomForest's real median), at-or-above-median reviews, and enough orders to be a real track record — no reason to change status."
+  because: "At-or-below-median predicted risk (recalibrated to RandomForest's real median), at-or-above-median reviews, and enough items sold to be a real track record — no reason to change status."
 
 - id: R11
   priority: 48

@@ -1,3 +1,5 @@
+HISTORICAL: produced with a fully grown forest (leaf 1) on item rows split at random vs by order; superseded by the order-grouped Stage 6 evaluation (reports/oof_metrics.json). Re-running the script now gives different forest numbers (default leaf 20).
+
 Diagnostic: sibling leakage and in-sample late_risk
 ==============================================================================
 items 110,189; distinct orders 96,470; overall late rate 7.9082%

@@ -24,8 +24,7 @@ table if the pipeline is rerun on different data.
 | `discovery_quadrants.csv` | `DiscoveryQuadrants` | Dimension extension (joins to `DimSeller` on `seller_id`) | 1,864 |
 | `seller_recommendations.csv` | `SellerRecommendations` | Dimension extension (joins to `DimSeller` on `seller_id`) | 2,970 |
 
-**Total: 10 tables, 461,680 rows exported.** (An earlier version of this file said 361,860;
-the ten per-table counts above were right, their sum was not.)
+**Total: 10 tables, 461,680 rows exported.**
 
 `AhpRanking` carries two versions of the review and on-time criteria: `avg_review_score` and
 `on_time_rate` are the **shrunk** values used for scoring (pulled toward the marketplace mean,

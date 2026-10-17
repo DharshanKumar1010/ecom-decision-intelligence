@@ -14,7 +14,6 @@ pipeline show fresh numbers without restarting the app.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -107,56 +106,6 @@ def load_knowledge_base() -> KnowledgeBase:
 # --------------------------------------------------------------------------
 # Small presentation helpers
 # --------------------------------------------------------------------------
-
-# A model-quality review is announced by an anchored line such as "FLAG: <token>" or
-# "STATUS: <token>" (optionally followed by a reason) in BUILD_LOG.md or a reports/ text
-# file. Anchoring means prose that merely mentions the token never triggers the note.
-REVIEW_TOKEN = "MODEL_UNDER_REVIEW"
-_REVIEW_LINE = re.compile(
-    rf"^\s*(?:FLAG|STATUS):\s*{REVIEW_TOKEN}\b[\s:.\-]*(?P<reason>.*)$", re.MULTILINE
-)
-
-
-def model_review_flag() -> tuple[str, str] | None:
-    """`(source file name, reason)` if a model-review flag exists, else `None`.
-
-    Looks at `BUILD_LOG.md` and every `*.md`/`*.txt` under `reports/`, resolved at call
-    time. Nothing in the repo sets this flag today, so the UI shows no note until it exists.
-    """
-    candidates = [config.PROJECT_ROOT / "BUILD_LOG.md"]
-    if config.REPORTS_DIR.exists():
-        candidates += sorted(config.REPORTS_DIR.glob("*.md")) + sorted(
-            config.REPORTS_DIR.glob("*.txt")
-        )
-    for path in candidates:
-        if not path.exists():
-            continue
-        match = _REVIEW_LINE.search(path.read_text(encoding="utf-8", errors="replace"))
-        if match:
-            return path.name, match.group("reason").strip()
-    return None
-
-
-_CV_LINE = re.compile(r"^\s*(\w+)\s+([0-9.]+)\s*\+/-\s*([0-9.]+)\s*$")
-
-
-def parse_cv_summary(text: str) -> dict[str, tuple[float, float]]:
-    """Read the "Mean +/- std across folds" block of `diagnostic_rf_cv.txt`.
-
-    Returns `{model_name: (mean_auc, std_auc)}`, or `{}` when the block is not
-    found (the caller falls back to single-split numbers).
-    """
-    marker = "Mean +/- std across folds:"
-    if marker not in text:
-        return {}
-    block = text.split(marker, 1)[1].split("\n\n", 1)[0]
-    parsed: dict[str, tuple[float, float]] = {}
-    for line in block.splitlines():
-        match = _CV_LINE.match(line)
-        if match:
-            parsed[match.group(1)] = (float(match.group(2)), float(match.group(3)))
-    return parsed
-
 
 def quadrant_thresholds(quadrants: pd.DataFrame) -> tuple[float, float]:
     """Quality and popularity split lines for the Discovery scatter.

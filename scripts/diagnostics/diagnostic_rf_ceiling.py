@@ -1,5 +1,9 @@
 """One-off diagnostic: is there a signal ceiling above LR/DT? NOT part of the pipeline.
 
+HISTORICAL: its committed report was produced with a random item split and a fully grown forest
+(leaf 1), and its logistic-regression and decision-tree lines are constants from that split.
+Superseded by the order-grouped Stage 6 evaluation (reports/oof_metrics.json).
+
 Trains a `RandomForestClassifier` on the EXACT same train/test split and
 12-feature set as `src.predict`'s final Stage 3 model (reusing
 `build_feature_table`/`_split_and_encode` directly, not a reimplementation,
@@ -12,7 +16,7 @@ LogisticRegression and DecisionTreeClassifier" constraint: RandomForest is
 used here ONLY for this isolated, throwaway diagnostic, confirmed with the
 user as an exception. It is NOT wired into `run_all.py`, NOT persisted to
 `models/`, and has NO test — `src/predict.py` and `src/config.py` are read
-from, never modified. Run directly: `python scripts/diagnostic_rf_ceiling.py`.
+from, never modified. Run directly: `python scripts/diagnostics/diagnostic_rf_ceiling.py`.
 """
 
 from __future__ import annotations
@@ -27,7 +31,7 @@ from sklearn.inspection import permutation_importance
 from sklearn.metrics import roc_auc_score
 from sklearn.pipeline import Pipeline
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.config import ALLOWED_FEATURES, PROCESSED_DATA_DIR, REPORTS_DIR, SEED  # noqa: E402
 from src.predict import (  # noqa: E402
@@ -136,8 +140,9 @@ def main() -> None:
     output = "\n".join(lines)
     print(output)
 
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    (REPORTS_DIR / "diagnostic_rf_ceiling.txt").write_text(output, encoding="utf-8")
+    (REPORTS_DIR / "diagnostics").mkdir(parents=True, exist_ok=True)
+    report_path = REPORTS_DIR / "diagnostics" / "diagnostic_rf_ceiling.txt"
+    report_path.write_text(output, encoding="utf-8")
 
 
 if __name__ == "__main__":

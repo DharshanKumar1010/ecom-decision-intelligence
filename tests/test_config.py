@@ -6,10 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from src.config import EXPECTED_RAW_FILES, verify_raw_files
+from src.config import EXPECTED_RAW_FILES, RAW_DATA_DIR, verify_raw_files
 
 
 def test_verify_raw_files_passes_on_real_raw_dir() -> None:
+    # The raw Olist CSVs are input data, not part of the repository. With none present (a fresh
+    # checkout, CI) there is nothing to verify; a directory holding SOME but not all of the
+    # files still fails, which is what this test is for.
+    if not RAW_DATA_DIR.is_dir() or not any(RAW_DATA_DIR.glob("*.csv")):
+        pytest.skip("data/raw has no CSV files; the Olist input data is not in this checkout")
     verify_raw_files()
 
 

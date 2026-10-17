@@ -14,7 +14,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from src.config import PROCESSED_DATA_DIR, RULES_DIR
+from src import explain
+from src.config import PROCESSED_DATA_DIR, REPORTS_DIR, RULES_DIR
 from src.expert import (
     Condition,
     ExplanationFacility,
@@ -101,14 +102,54 @@ def test_promote_fires_via_r09_for_very_low_risk_hidden_gem(engine: InferenceEng
 
 def test_keep_fires_via_default_rule_for_sparse_seller(engine: InferenceEngine) -> None:
     facts = WorkingMemory(
-        # avg_late_risk kept below R03's 0.29 Warn threshold so this fixture
-        # isolates the default rule rather than accidentally matching R03.
-        seller_id="quiet", ahp_score=None, avg_late_risk=0.15, avg_review=None,
+        # A seller with 2 items sold has too little evidence for any rule, even with a risk
+        # score far above every Warn/Suspend cutoff, so only the default rule applies.
+        seller_id="quiet", ahp_score=None, avg_late_risk=0.95, avg_review=None,
         order_volume=2, late_rate=0.0, is_hidden_gem=False,
     ).as_facts()
     result = engine.run(facts)
     assert result.fired_rule.action == "Keep"
     assert result.fired_rule.id == "R12"
+
+
+def _minimum_items_sold(rule: Rule) -> float | None:
+    """The `order_volume >= N` gate of a rule, or None if it has none."""
+    gates = [c.value for c in rule.conditions if c.fact == "order_volume" and c.op == ">="]
+    return max(gates) if gates else None
+
+
+def test_every_warn_and_suspend_rule_requires_minimum_evidence(engine: InferenceEngine) -> None:
+    """A warning or suspension needs at least 5 items sold, in the rule file itself."""
+    for rule in engine.knowledge_base.rules:
+        if rule.action in ("Warn", "Suspend"):
+            gate = _minimum_items_sold(rule)
+            assert gate is not None and gate >= 5, f"{rule.id} ({rule.action}) has no gate >= 5"
+
+
+def test_risk_only_rules_do_not_fire_for_tiny_sellers(engine: InferenceEngine) -> None:
+    high_risk_tiny = WorkingMemory(
+        seller_id="tiny", ahp_score=None, avg_late_risk=0.99, avg_review=1.0,
+        order_volume=4, late_rate=1.0, is_hidden_gem=False,
+    ).as_facts()
+    result = engine.run(high_risk_tiny)
+    assert result.fired_rule.id == "R12"
+    just_enough = {**high_risk_tiny, "order_volume": 5}
+    assert engine.run(just_enough).fired_rule.action in ("Suspend", "Warn")
+
+
+def test_no_warn_or_suspend_recommendation_for_a_seller_below_five_items() -> None:
+    facts_path = PROCESSED_DATA_DIR / "SellerFacts.parquet"
+    recs_path = REPORTS_DIR / "seller_recommendations.csv"
+    if not facts_path.exists() or not recs_path.exists():
+        pytest.skip("pipeline outputs not available; run run_all.py first")
+    facts = pd.read_parquet(facts_path)[["seller_id", "order_volume"]]
+    recs = pd.read_csv(recs_path).merge(facts, on="seller_id", how="left", validate="1:1")
+    assert recs["order_volume"].notna().all()
+    tiny = recs[recs["order_volume"] < 5]
+    assert len(tiny) > 0, "no seller below 5 items sold; the check would prove nothing"
+    assert not tiny["action"].isin(["Warn", "Suspend"]).any(), tiny[
+        tiny["action"].isin(["Warn", "Suspend"])
+    ][["seller_id", "order_volume", "action", "rule_id"]].to_string()
 
 
 def test_explanation_facility_renders_rationale_and_trace(engine: InferenceEngine) -> None:
@@ -220,35 +261,51 @@ def test_promote_rules_remain_discriminating_among_real_hidden_gems(
         )
 
 
-def test_percentile_calibrated_rules_remain_discriminating_among_all_sellers(
-    engine: InferenceEngine,
-) -> None:
-    """Same drift guard as the Hidden-Gem Promote check, for the other six
-    rules whose thresholds were calibrated against a PERCENTILE of
-    avg_late_risk or late_rate over ALL sellers (see
-    docs/knowledge_engineering.md section 5b for which rules are
-    percentile-intent vs. fixed-threshold-intent -- R02 is deliberately
-    excluded here since its 40% late_rate threshold is a fixed severity
-    threshold by design, not a percentile, and a near-0% fire rate is its
-    correct, intended behavior, not drift).
-
-    R01/R03/R06/R10 (avg_late_risk) drifted to the ~97th percentile when
-    RandomForest replaced LogisticRegression as primary and were
-    recalibrated; R05/R11 (late_rate, empirical and model-independent) were
-    checked and found not to have drifted. This test guards all six against
-    future drift the same way, using the REAL current data, not a fixture.
-    """
+def _seller_facts() -> pd.DataFrame:
     seller_facts_path = PROCESSED_DATA_DIR / "SellerFacts.parquet"
     if not seller_facts_path.exists():
         pytest.skip("data/processed/SellerFacts.parquet not available; run run_all.py first")
-
     seller_facts = pd.read_parquet(seller_facts_path)
     assert len(seller_facts) > 0
+    return seller_facts
 
+
+def _rule_threshold(rule: Rule, fact: str) -> float:
+    return float(next(c.value for c in rule.conditions if c.fact == fact))
+
+
+def _reference_population(seller_facts: pd.DataFrame, rule: Rule) -> pd.DataFrame:
+    """The sellers a rule can apply to: those meeting its own items-sold gate, else everyone.
+
+    R01 and R03 (risk rules with a gate) are percentile-calibrated on this group, not on all
+    sellers; R06 and R10 keep their all-seller median, R06 because it has no gate and R10 by
+    decision (see docs/knowledge_engineering.md section 10).
+    """
+    gate = _minimum_items_sold(rule)
+    if gate is None:
+        return seller_facts
+    return seller_facts[seller_facts["order_volume"] >= gate]
+
+
+def test_percentile_calibrated_rules_remain_discriminating_in_their_reference_population(
+    engine: InferenceEngine,
+) -> None:
+    """Drift guard for the rules calibrated against a PERCENTILE of avg_late_risk or late_rate
+    (docs/knowledge_engineering.md sections 5b and 10 say which rules are percentile-intent;
+    R02's 40 % late_rate is a fixed severity level, so a near-0 % fire rate is correct there).
+
+    Each rule is measured over the sellers it can apply to (`_reference_population`): R01 and
+    R03 over sellers with at least 5 items sold, the rest over all sellers (R05 and R10 over
+    their own gate). A rate of 0 % or 100 % means the threshold drifted away from the
+    distribution it was set against. Uses the REAL current data, not a fixture.
+    """
+    seller_facts = _seller_facts()
     rules_by_id = {rule.id: rule for rule in engine.knowledge_base.rules}
     for rule_id in ("R01", "R03", "R05", "R06", "R10", "R11"):
         rule = rules_by_id[rule_id]
-        match_rate = seller_facts.apply(
+        population = _reference_population(seller_facts, rule)
+        assert len(population) > 0, rule_id
+        match_rate = population.apply(
             lambda row, r=rule: r.matches(
                 {
                     "ahp_score": None if pd.isna(row["ahp_score"]) else row["ahp_score"],
@@ -261,10 +318,67 @@ def test_percentile_calibrated_rules_remain_discriminating_among_all_sellers(
             axis=1,
         ).mean()
         assert 0.0 < match_rate < 1.0, (
-            f"{rule_id} fires on {match_rate:.1%} of all real sellers -- "
+            f"{rule_id} fires on {match_rate:.1%} of its {len(population):,} reference sellers -- "
             "not discriminating (0% or 100%); its threshold likely needs "
             "recalibrating against the current model's late_risk distribution."
         )
+
+
+@pytest.mark.parametrize(("rule_id", "intended_percentile"), [("R01", 0.75), ("R03", 0.90)])
+def test_r01_and_r03_thresholds_sit_at_their_percentile_of_sellers_with_five_items(
+    engine: InferenceEngine, rule_id: str, intended_percentile: float
+) -> None:
+    """R01 is 'top quartile' and R03 'top 10%' of the sellers they apply to (items sold >= 5)."""
+    seller_facts = _seller_facts()
+    rule = next(r for r in engine.knowledge_base.rules if r.id == rule_id)
+    threshold = _rule_threshold(rule, "avg_late_risk")
+    eligible = _reference_population(seller_facts, rule)["avg_late_risk"]
+    share_at_or_below = float((eligible <= threshold).mean())
+    assert abs(share_at_or_below - intended_percentile) < 0.01, (
+        f"{rule_id} threshold {threshold} is the {share_at_or_below:.1%} percentile of "
+        f"{len(eligible):,} sellers with >= 5 items sold, not {intended_percentile:.0%}"
+    )
+
+
+def test_r06_and_r10_keep_the_all_seller_median_risk(engine: InferenceEngine) -> None:
+    """Documented decision: R06 and R10 stay at the median of avg_late_risk over ALL sellers."""
+    seller_facts = _seller_facts()
+    rules_by_id = {rule.id: rule for rule in engine.knowledge_base.rules}
+    for rule_id in ("R06", "R10"):
+        threshold = _rule_threshold(rules_by_id[rule_id], "avg_late_risk")
+        share = float((seller_facts["avg_late_risk"] <= threshold).mean())
+        assert abs(share - 0.5) < 0.01, f"{rule_id}: {threshold} is the {share:.1%} percentile"
+
+
+def test_condition_checks_and_near_miss_agree_with_the_engine_for_every_seller_and_rule(
+    engine: InferenceEngine,
+) -> None:
+    """All sellers x all rules: the page's tick list equals Rule.matches, and near-miss only
+    lists unmatched, higher-priority rules with a different action (one per action)."""
+    from src.expert import _facts_from_row
+
+    seller_facts = _seller_facts()
+    rules = engine.knowledge_base.rules
+    pairs = 0
+    for _, row in seller_facts.iterrows():
+        facts = _facts_from_row(row)
+        for rule in rules:
+            ticks = explain.condition_checks(rule, facts)
+            assert all(ok for ok, _ in ticks) == rule.matches(facts), (row["seller_id"], rule.id)
+            pairs += 1
+        fired = engine.run(facts).fired_rule
+        near = explain.near_miss(facts, rules, limit=len(rules))
+        by_id = {r.id: r for r in rules}
+        for miss in near:
+            assert not by_id[miss.rule_id].matches(facts)
+            assert miss.priority > fired.priority and miss.action != fired.action
+            assert miss.gaps
+        expected_actions = {
+            r.action for r in rules
+            if r.priority > fired.priority and r.action != fired.action and not r.matches(facts)
+        }
+        assert {m.action for m in near} == expected_actions
+    assert pairs == len(seller_facts) * len(rules)
 
 
 def test_knowledge_base_rejects_missing_required_field(tmp_path: Path) -> None:

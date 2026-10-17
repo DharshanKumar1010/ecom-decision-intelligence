@@ -1,5 +1,4 @@
-"""Run the full Stage 1 + Stage 2 + Stage 3 pipeline in order and print a
-summary (CLAUDE.md section 9).
+"""Run the full Python pipeline in order and print a summary (CLAUDE.md section 9).
 
 Stages: build_tables -> synthetic -> clickstream sanity checks -> sentiment
 -> predict -> ahp -> discovery -> expert. Each stage is timed and logged;
@@ -47,6 +46,7 @@ from src import (
 )
 from src.config import (
     AHP_PAIRWISE_MATRIX,
+    MODELS_DIR,
     PROCESSED_DATA_DIR,
     PROJECT_ROOT,
     REPORTS_DIR,
@@ -174,8 +174,8 @@ def main() -> None:
     }
 
     metrics = _read_json(REPORTS_DIR / "model_metrics.json")
-    lr_auc = metrics["logistic_regression"]["roc_auc"]
-    dt_auc = metrics["decision_tree"]["roc_auc"]
+    primary_model = _read_json(MODELS_DIR / "registry.json")["primary_model"]
+    model_aucs = {name: values["roc_auc"] for name, values in metrics.items()}
 
     ahp_ranking = pd.read_csv(REPORTS_DIR / "ahp_ranking.csv")
     _, _, _, ahp_cr = ahp.compute_weights(AHP_PAIRWISE_MATRIX)
@@ -184,7 +184,7 @@ def main() -> None:
     quadrant_counts = quadrants["quadrant"].value_counts().to_dict()
 
     print("\n" + "=" * 72)
-    print("STAGE 1 + STAGE 2 + STAGE 3 PIPELINE SUMMARY")
+    print("PIPELINE SUMMARY")
     print("=" * 72)
 
     print("\nStage timings:")
@@ -196,11 +196,12 @@ def main() -> None:
         count = _row_count(path) if path.exists() else "MISSING"
         print(f"  {label:<40s} {count}")
 
-    print("\nLate-delivery models (test-set ROC-AUC):")
-    print(f"  logistic_regression: {lr_auc:.4f}")
-    print(f"  decision_tree:       {dt_auc:.4f}")
+    print("\nLate-delivery models (order-grouped test-set ROC-AUC):")
+    for name, auc in model_aucs.items():
+        role = "primary" if name == primary_model else "kept for interpretability"
+        print(f"  {name + ':':<22s} {auc:.4f}  ({role})")
 
-    print("\nAHP (established sellers, >= 30 orders):")
+    print("\nAHP (established sellers, >= 30 items sold):")
     print(f"  seller count: {len(ahp_ranking)}")
     print(f"  consistency ratio (CR): {ahp_cr:.4f}")
 

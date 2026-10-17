@@ -1,5 +1,8 @@
 """One-off diagnostic: is RF's AUC edge stable under 5-fold CV? NOT part of the pipeline.
 
+HISTORICAL: random-fold CV over item rows with a fully grown forest, inflated by sibling leakage.
+Superseded by the order-grouped Stage 6 evaluation (reports/oof_metrics.json).
+
 Follow-up to `diagnostic_rf_ceiling.py`, which compared a single held-out
 split. This script runs 5-fold stratified cross-validation on the SAME
 `RandomForestClassifier(n_estimators=300, max_depth=None,
@@ -20,7 +23,7 @@ LogisticRegression and DecisionTreeClassifier" constraint (RandomForest,
 confirmed as an exception for this isolated diagnostic — see
 `diagnostic_rf_ceiling.py`'s docstring). NOT wired into `run_all.py`, NOT
 persisted to `models/`, NO test, and `src/predict.py`/`config.py` are read
-from, never modified. Run directly: `python scripts/diagnostic_rf_cv.py`
+from, never modified. Run directly: `python scripts/diagnostics/diagnostic_rf_cv.py`
 (slow: 5 folds x 3 models, RandomForest with unlimited depth on ~88-97k
 rows per fold dominates the runtime — expect this to take a while).
 """
@@ -39,7 +42,7 @@ from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedKFold
 from sklearn.pipeline import Pipeline
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.config import ALLOWED_FEATURES, PROCESSED_DATA_DIR, REPORTS_DIR, SEED  # noqa: E402
 from src.predict import (  # noqa: E402
@@ -277,8 +280,9 @@ def main() -> None:
     output = "\n".join(lines)
     print("\n" + output)
 
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    (REPORTS_DIR / "diagnostic_rf_cv.txt").write_text(output, encoding="utf-8")
+    (REPORTS_DIR / "diagnostics").mkdir(parents=True, exist_ok=True)
+    report_path = REPORTS_DIR / "diagnostics" / "diagnostic_rf_cv.txt"
+    report_path.write_text(output, encoding="utf-8")
 
 
 if __name__ == "__main__":

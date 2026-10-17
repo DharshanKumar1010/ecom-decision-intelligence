@@ -1,7 +1,7 @@
 """Quality-vs-popularity "hidden gems" discovery (CLAUDE.md section 7.7).
 
 Surfaces sellers that are high quality but low visibility — the opposite of
-a naive "sort by orders" view. "Quality" here reuses the AHP composite score
+a naive "sort by items sold" view. "Quality" here reuses the AHP composite score
 from `src.ahp` (`compute_weights`, `normalize_criteria`, `score_sellers`),
 recomputed at a lower `config.DISCOVERY_MIN_ORDERS` threshold so smaller,
 newer sellers are eligible; no second, parallel quality metric is built.
@@ -12,7 +12,7 @@ reviews, reliable delivery — never literal product nutrition or food
 health; Olist has no such data (CLAUDE.md section 7.7.1).
 
 Every row is annotated with a `confidence` flag (`confidence_flag`), and a
-seller below `config.DISCOVERY_CONFIDENCE_MIN_ORDERS` orders must never be
+seller below `config.DISCOVERY_CONFIDENCE_MIN_ORDERS` items sold must never be
 presented with the same visual weight as an established one — enforced in
 the dashboard (a later stage), not just noted here as a column.
 """
@@ -44,7 +44,7 @@ from src.config import (
 
 logger = get_logger(__name__)
 
-# Confidence tiers for presenting Hidden Gems. By construction a Hidden Gem has fewer orders
+# Confidence tiers for presenting Hidden Gems. By construction a Hidden Gem has fewer items sold
 # than the popularity median, so most gems fall under the confidence threshold; the tiers
 # keep the few well-supported picks ("Actionable") apart from the directional ones
 # ("Watchlist"). Tier follows `confidence_flag`, so the boundary is defined in one place.
@@ -173,13 +173,13 @@ def build_seller_facts(
 
     Facts are computed over ALL sellers in `fact` (not just the AHP-eligible
     ones in `quadrant_df`), so every seller gets a recommendation later. A
-    seller with fewer than `config.DISCOVERY_MIN_ORDERS` orders has no AHP
+    seller with fewer than `config.DISCOVERY_MIN_ORDERS` items sold has no AHP
     score and gets `ahp_score = NaN`, `is_hidden_gem = False` — left
     explicit via a left join, never silently coerced to a default score.
 
     Args:
         quadrant_df: output of `compute_quadrants` (AHP-eligible sellers
-            only, i.e. >= `config.DISCOVERY_MIN_ORDERS` orders).
+            only, i.e. >= `config.DISCOVERY_MIN_ORDERS` items sold).
         late_predictions: `LatePredictions.parquet` (`item_key`, `late_risk`).
         fact: FactOrderItems (must contain item_key, order_id, seller_id,
             review_score, is_late).
@@ -272,7 +272,7 @@ def main() -> None:
 
     _write_summary(quadrant_df, gems)
     logger.info(
-        "Discovery: %d AHP-eligible sellers (>= %d orders), %d Hidden Gems, "
+        "Discovery: %d AHP-eligible sellers (>= %d items sold), %d Hidden Gems, "
         "%d low-confidence rows",
         len(quadrant_df),
         DISCOVERY_MIN_ORDERS,

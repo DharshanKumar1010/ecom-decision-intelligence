@@ -1,35 +1,98 @@
 # E-Commerce Decision Support System
 
-BIA 21CSE421T course project. A Python + Streamlit decision support system on the Olist Brazilian
-e-commerce dataset that answers: **which sellers should the marketplace keep, warn, suspend, or
-feature, and why?**
+A decision support system on the Olist Brazilian e-commerce dataset (BIA 21CSE421T course
+project). It answers two questions a marketplace operator has about its sellers: **which sellers
+should we keep, warn, suspend or feature, and why?** and **which good sellers are being
+overlooked and deserve more visibility?** The answer for each seller comes with a plain-language
+reason that traces back to named rules and to numbers in the data.
 
-See [CLAUDE.md](CLAUDE.md) for the full specification. This README is a stub and will be filled in
-(problem statement, architecture, setup, results, limitations) once the full pipeline exists.
+It combines clickstream funnel metrics, call-transcript sentiment, a late-delivery risk model,
+a multi-criteria (AHP) seller score, a quality-versus-popularity analysis ("hidden gems") and a
+rule-based expert system with explanations. Python builds and verifies every output; a Streamlit
+app shows them page by page (the four phases of a decision: intelligence, design, choice,
+implementation), and the same outputs are loaded into SQL Server for a Power BI report built by
+hand.
 
-## Status
+## How it fits together
 
-Stage 1 (scaffolding + data layer) only: `src/config.py`, `src/build_tables.py`,
-`src/synthetic.py`, `src/clickstream.py`, and their tests. Models, AHP, the expert system, and the
-Streamlit app are not yet implemented.
+```
+data/raw (9 Olist CSVs)
+   |  src/build_tables.py, src/synthetic.py
+   v
+data/processed (Parquet: facts, dimensions, synthetic clickstream and calls)
+   |  src/clickstream.py  src/sentiment.py  src/predict.py  src/ahp.py  src/discovery.py  src/expert.py
+   v
+reports/ (metrics, AHP ranking, quadrants, seller recommendations)  +  models/ (saved models)
+   |                                   |                                |
+   | src/export_sql.py                 | app/ (Streamlit, 6 pages)      | reports/RESULTS.md
+   v                                   v                                  (every number, one place)
+data/export (10 CSVs) --> src/load_sql.py --> SQL Server --> Power BI (by hand)
+```
 
-## Setup and commands
+## Set up
 
-This project is developed on Windows. Both a `Makefile` (for WSL/git-bash/CI) and a `tasks.ps1`
-(for native PowerShell) expose the same targets:
+1. Python 3.11 or 3.12 on Windows. Create the environment and install the pinned packages:
+   `.\tasks.ps1 setup` (or `python -m venv .venv`, then `.venv\Scripts\python -m pip install -r requirements.txt`).
+2. Put the nine Olist CSVs in `data/raw/` (`olist_orders_dataset.csv`,
+   `olist_order_items_dataset.csv`, `olist_order_reviews_dataset.csv`,
+   `olist_order_payments_dataset.csv`, `olist_products_dataset.csv`,
+   `olist_sellers_dataset.csv`, `olist_customers_dataset.csv`, `olist_geolocation_dataset.csv`,
+   `product_category_name_translation.csv`). The folder is read-only input and not part of the
+   repository.
+3. For the SQL Server step only: SQL Server Express with a database named
+   `EcomDecisionIntelligence`, and the Microsoft **ODBC Driver 17 or 18 for SQL Server**. The
+   loader signs in with Windows authentication and never creates a database.
 
-| Task | Makefile (WSL / git-bash / CI) | PowerShell |
+## Run it
+
+| Step | Command | What it does |
 |---|---|---|
-| Create venv, install deps | `make setup` | `.\tasks.ps1 setup` |
-| Build data tables | `make data` | `.\tasks.ps1 data` |
-| Train models | `make models` | `.\tasks.ps1 models` |
-| Run full pipeline | `make run` | `.\tasks.ps1 run` |
-| Launch dashboard | `make app` | `.\tasks.ps1 app` |
-| Run tests | `make test` | `.\tasks.ps1 test` |
-| Lint + type-check | `make lint` | `.\tasks.ps1 lint` |
-| Lint + test (pre-done-check) | `make check` | `.\tasks.ps1 check` |
+| 1 | `.\tasks.ps1 run` (add `python run_all.py --export` to write the CSVs) | Builds tables, trains the models, scores sellers, writes `reports/`, `models/`, `data/processed/`; about 9 minutes, almost all in the model fits. |
+| 2 | `.\tasks.ps1 load-sql` | Loads the ten exported CSVs into SQL Server and checks the row counts and one checksum per table. `python -m src.load_sql --dry-run` first if you want a rehearsal. |
+| 3 | `.\tasks.ps1 app` | Starts the Streamlit app (`streamlit run app/Home.py`). |
+| check | `.\tasks.ps1 verify` | Lint, type check, all tests, the live SQL comparison, a freshness check of `reports/RESULTS.md` and a headless run of every page. |
+| all | `.\tasks.ps1 rebuild` | Step 1 with export, step 2, then `verify`. |
 
-`make models`, `make run`, and `make app` will fail until later stages (`sentiment.py`,
-`predict.py`, `ahp.py`, `expert.py`, `run_all.py`, `app/`) are implemented — expected at this stage.
+`Makefile` has equivalent targets for `make` users (`setup data models export run app test lint check`).
 
-Place the 9 raw Olist CSVs in `data/raw/` before running `data`/`run` (see CLAUDE.md section 6.1).
+## Where the results are
+
+Every figure (model accuracy, row counts, quadrant and rule counts, action counts) lives in
+**`reports/RESULTS.md`**, generated from the pipeline outputs by `scripts/make_results.py`.
+Other documents point there instead of repeating numbers, and a test fails if the file is out of
+date. Start with `docs/README.md` for an index of the rest of the documentation.
+
+## Limitations to know before you rely on it
+
+- The **clickstream and the call data are synthetic** (Olist has neither); every page and report
+  that shows them says so. Sentiment comes from transcripts only, no audio.
+- **The late-risk number is a ranking score, not a probability.** It orders orders by risk;
+  with balanced class weights its typical value is far above the real late rate. It is
+  out-of-fold (each score comes from a model that never saw that order).
+- **No forward-looking skill.** Trained on the earliest 80% of orders and tested on the latest
+  20%, all three models are at or below chance. The system describes and ranks historical data
+  from one marketplace; it does not forecast future deliveries.
+- **Items sold, not orders.** A seller's volume counts order lines. An order with three products
+  is three items sold.
+- **Hidden gems are directional.** Most have few items sold; the app separates *Stronger
+  evidence* from *Early signal*. A seller with fewer than 5 items sold is never warned or
+  suspended (the rules need that much history).
+- The loader's `TrustServerCertificate=yes` setting skips certificate validation: fine for a
+  local SQL Server Express instance, not for a remote server.
+
+## Repository layout
+
+```
+src/            pipeline modules (one per syllabus topic), config.py, explain.py (plain-language wording), export_sql.py, load_sql.py
+app/            Streamlit app: Home.py, pages/ (6), shared helpers and the dark theme
+rules/          seller_rules.yaml, the only place a rule threshold is defined
+sql/            schema.sql, the SQL Server tables, keys, indexes and the scorecard view
+scripts/        make_results.py, app_smoke.py, diagnostics/ (one-off experiments, not part of the pipeline)
+tests/          pytest suite
+docs/           knowledge_engineering.md, powerbi_setup.md, DEMO_SCRIPT.md, SYLLABUS_MAP.md, MANUAL_CHECKS.md, README.md (index), archive/
+reports/        generated outputs; RESULTS.md, diagnostics/
+data/, models/  generated and ignored by git (data/raw is the input)
+powerbi/        the Power BI report (kept out of git)
+```
+
+`CLAUDE.md` holds the project rules for the AI assistant that helped build it.

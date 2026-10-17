@@ -5,10 +5,11 @@ question as the title, one grey sentence under it, a few key numbers, one main c
 single **Technical details** expander at the bottom for anyone who wants the tables,
 matrices and rules. Open that expander only when a question needs it.
 
-**About the figures.** Every number below was checked against the repo's pipeline outputs on
-2026-10-13. The dashboard computes its values live from those files, so **if the dashboard
-and this script ever disagree, the dashboard wins**; re-run `python run_all.py` and update
-this file.
+**About the figures.** Every number below is taken from `reports/RESULTS.md` (generated from
+the pipeline outputs; checked 2026-10-17), and `tests/test_results.py` fails if a quoted figure
+stops matching it. The dashboard computes its values live from the same files, so **if the
+dashboard and this script ever disagree, the dashboard wins**; re-run the pipeline, regenerate
+`reports/RESULTS.md` and update this file.
 
 **Wording to use.** The pages say **items sold** for a seller's volume and **delivered
 orders** for the marketplace total. They differ because items sold counts order lines: an
@@ -73,9 +74,11 @@ tables.
 
 *Click:* use **Try an example** to switch outcomes; open **Technical details**.
 
-> "The page opens on a seller where a real rule fired, shows the recommendation in one word,
-> and ticks off each condition behind it. Under Technical details are all the rules and what
-> would have to change to get a different outcome."
+> "The page opens on a seller with at least 5 items sold where a real rule fired, shows the
+> recommendation in one word, and ticks off each condition behind it. Under Technical details
+> are all the rules and what would have to change to get a different outcome. A seller with
+> fewer than 5 items sold is never warned or suspended; it shows Keep with the default rule,
+> 'pending more data'."
 
 ### 6. DSS Architecture: "How does the system fit together?"
 
@@ -107,7 +110,7 @@ analysis) can be demonstrated, and every place they appear carries a SYNTHETIC t
 Take one late order and one on-time order at random; the model gives the late one the higher
 risk score about 74% of the time. It is clearly better than a coin flip but far from perfect.
 At the default cut-off it flags about half of the late orders (recall 0.52) but only about
-one flag in five is right (precision 0.20, where 7.9% of items are late), so it is a ranking
+one flag in five is right (precision 0.19, where 7.9% of items are late), so it is a ranking
 aid, not an oracle.
 
 **4. Why are most hidden gems "low confidence"?**
@@ -134,7 +137,7 @@ item's score is out-of-fold: produced by a model trained on folds that contain n
 item's order. Before this fix the forest had memorised its training rows (its AUC on them was
 1.00) and a seller's average predicted risk correlated 0.91 with its own actual late rate; now
 the correlation is 0.34 (0.52 for sellers with 5 or more items sold). The score is also a
-ranking score, not a probability: with balanced class weights its typical value (about 0.34)
+ranking score, not a probability: with balanced class weights its typical value (about 0.33)
 is far above the 7.9% late rate, which is why the rules use percentiles of it. The app still
 takes model-quality claims from the held-out numbers and never turns seller scores into
 claims about how many late orders we would catch.
@@ -154,11 +157,12 @@ on-time rate 28%, items sold 17% and price 7%.
 
 **8. Where do the expert-system thresholds come from?**
 Each threshold is either a fixed business limit or a percentile of the real data, and the
-percentile ones were recalibrated when the random forest replaced the first model, and the
-quality-score ones again when the quality score began shrinking small sellers toward the
-average, because
-their distributions moved. The rule-by-rule justification is in
-`docs/knowledge_engineering.md`, and a test fails if the thresholds drift out of line again.
+percentile ones were recalibrated when the random forest replaced the first model, when the
+quality score began shrinking small sellers toward the average, and when the risk score became
+out-of-fold, because their distributions moved. Warn and Suspend rules also need at least 5
+items sold, so a one-item seller is never warned or suspended on thin evidence. The
+rule-by-rule justification is in `docs/knowledge_engineering.md`, and a test fails if the
+thresholds drift out of line again.
 
 **9. Does "healthier" or "good" mean anything about food or nutrition?**
 No. Olist has no such data. "Good" means sound business quality: good reviews and reliable
@@ -176,8 +180,8 @@ unseen orders, not sharply, and it does not forecast the future: trained on the 
 of orders and tested on the latest 20% (late May to August 2018, when only 5.2% of items were
 late against 8.6% before), all three models score about 0.4 to 0.5, i.e. no better than a coin
 flip (forest 0.52, tree 0.50, linear model 0.40; without the month and weekday inputs they
-fall to 0.44, 0.42 and 0.40). The forest's lead over the others survives only as the smallest
-of three weak results. (Orders delayed beyond the data extract may be missing from the end of
+fall to 0.42, 0.42 and 0.40). The forest's lead over the tree is 0.01 with those inputs and
+gone without them, the smallest of three weak results. (Orders delayed beyond the data extract may be missing from the end of
 the data, which could make that period look better than it was; this was not verified.)
 Hidden gems rest on few items sold. The app is a decision aid on historical data from
 one marketplace, and nothing here proves cause and effect. The speech analytics works from

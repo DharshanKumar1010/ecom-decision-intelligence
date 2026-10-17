@@ -1,8 +1,13 @@
 """One-off diagnostic: sibling leakage in the item-level split, and in-sample late_risk.
 
+HISTORICAL: its committed report was produced with a fully grown forest (leaf 1); the forest
+default is now leaf 20 and part (d) now reads the out-of-fold predictions, so re-running it gives
+different forest numbers. Superseded by the order-grouped Stage 6 evaluation
+(reports/oof_metrics.json).
+
 NOT part of the pipeline: not wired into `run_all.py`, no committed file is changed other than
-the report this script writes (`reports/diagnostic_group_leak.txt`). Run directly:
-`python scripts/diagnostic_group_leak.py` (slow: two RandomForest fits on ~88k rows).
+the report this script writes (`reports/diagnostics/diagnostic_group_leak.txt`). Run directly:
+`python scripts/diagnostics/diagnostic_group_leak.py` (slow: two RandomForest fits on ~88k rows).
 
 Items of one order share `is_late` and most features (110,189 items = 97,811 seller-order
 pairs = 96,470 orders), but the committed split put individual item rows at random into train
@@ -31,7 +36,7 @@ from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedGroupKFold, train_test_split
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.config import ALLOWED_FEATURES, PROCESSED_DATA_DIR, REPORTS_DIR, SEED  # noqa: E402
 from src.predict import (  # noqa: E402
@@ -151,8 +156,9 @@ def main() -> None:
         )
     report = "\n".join(lines)
     print(report)  # noqa: T201 - one-off diagnostic script
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    (REPORTS_DIR / "diagnostic_group_leak.txt").write_text(report + "\n", encoding="utf-8")
+    (REPORTS_DIR / "diagnostics").mkdir(parents=True, exist_ok=True)
+    report_path = REPORTS_DIR / "diagnostics" / "diagnostic_group_leak.txt"
+    report_path.write_text(report + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

@@ -18,12 +18,12 @@ in-sample echo of the seller's own late rate.
 Three models are trained on the identical split and feature set:
 `LogisticRegression` and `DecisionTreeClassifier` (kept for interpretability
 — readable coefficients / a printable rule path) and `RandomForestClassifier`
-as the PRIMARY/production model, adopted based on confirmed cross-validated
-evidence (5-fold CV mean AUC 0.7928 vs. DT's 0.6870 and LR's 0.6247, stable
-low-variance advantage, identical top-feature ranking in every fold — see
-`reports/diagnostic_rf_cv.txt` and `BUILD_LOG.md`). This is an explicit,
-confirmed override of CLAUDE.md's historical "LR/DT only" constraint — see
-CLAUDE.md section 1 and 7.3, updated alongside this change.
+as the PRIMARY/production model (it leads on the order-grouped test fold and on the
+out-of-fold pass; the numbers are in `reports/oof_metrics.json` and `reports/RESULTS.md`; the
+random-fold CV that first justified it was inflated by sibling leakage, see
+`reports/diagnostics/diagnostic_group_leak.txt`). Its `late_risk` is a RANKING score (balanced
+class weights put its median far above the 7.9% late rate): it orders orders by risk, it is
+not a calibrated probability and it does not forecast future deliveries.
 
 Missing feature values are never dropped or imputed against the full
 dataset: all three models are `sklearn.pipeline.Pipeline`s whose first step
@@ -506,7 +506,9 @@ def out_of_fold_predictions(
     builders: Mapping[str, Callable[[], Pipeline]],
     folds: list[tuple[np.ndarray, np.ndarray]] | None = None,
 ) -> pd.DataFrame:
-    """Out-of-fold predicted late probability for EVERY row, one fresh model per fold.
+    """Out-of-fold late-risk score (a ranking score, not a probability) for EVERY row.
+
+    One fresh model per fold.
 
     For each order-grouped fold the product-category frequency map is fitted on that fold's
     training rows only, a new pipeline is built and fitted per model, and only the held-out
@@ -519,7 +521,7 @@ def out_of_fold_predictions(
         folds: precomputed `grouped_stratified_folds(table)` (computed if omitted).
 
     Returns:
-        DataFrame with `item_key`, one probability column per builder, and `fold` (the fold
+        DataFrame with `item_key`, one risk-score column per builder, and `fold` (the fold
         in which the row was held out).
     """
     folds = folds or grouped_stratified_folds(table)

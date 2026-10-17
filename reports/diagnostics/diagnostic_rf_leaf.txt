@@ -1,3 +1,5 @@
+CURRENT: order-grouped out-of-fold protocol; re-running the script reproduces these numbers exactly (checked in Stage 8). Evidence for forest leaf size 20.
+
 Diagnostic: RandomForest min_samples_leaf under the order-grouped OOF protocol
 ==============================================================================
  leaf  pooled OOF AUC  fold mean  fold std  vs leaf 1  fitted size MB  size vs leaf 1  minutes
