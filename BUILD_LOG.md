@@ -581,3 +581,81 @@ on unseen orders from the same period, with a smaller margin. The model family w
 training rows did most of the work behind the seller-level risk the rules used. (3) With balanced
 class weights the score's median is 0.34 against a 7.9% late rate: it ranks, it is not a
 probability. (4) Fully grown trees were the worst leaf size by AUC as well as by size.
+
+## Stage 7 — SQL Server loader (built, not committed)
+
+**Why.** The audit found the SSMS Import Flat File wizard would mis-type or reject several export
+columns: `DimProduct.product_weight_g` has two blanks (first at row 8,578, so the column is guessed
+NOT NULL), `seller_recommendations.because` has 1,298 rows with an em dash and the file has no BOM,
+and several text columns grow past the sampled rows (`item_key` 35 vs 34, category names 46 vs
+34, `quadrant` 22 vs 10).
+
+**Owner exception.** CLAUDE.md sections 1 and 10 forbid writing SQL or connecting to a database.
+The owner lifted that for exactly `sql/schema.sql`, `src/load_sql.py` and `tests/test_load_sql.py`.
+CLAUDE.md was not edited; a proposed diff was handed to the owner. `pyodbc==5.3.0` is the one new
+dependency (`requirements.txt`, `pyproject.toml` mypy override and a `sql_server` pytest marker).
+
+**Driver check.** ODBC drivers installed: SQL Server, ODBC Driver 17, ODBC Driver 18 (32 and 64
+bit). `MSSQL$SQLEXPRESS` running, `SQLBrowser` stopped (not needed for a local connection).
+`pyodbc` 5.3.0 imported under Smart App Control on the first try, in a throwaway venv outside the
+repo; no older version had to be tried and no policy was touched. Connection to
+`localhost\SQLEXPRESS` with Windows Authentication works through Driver 18 with
+`TrustServerCertificate=yes` (a client-side option for the local self-signed certificate). The
+database `EcomDecisionIntelligence` already existed and held two older hand-imported tables,
+`DimCustomer` and `DimProduct` (nvarchar(50), `product_weight_g` as float); the loader replaced
+them.
+
+**Schema (`sql/schema.sql`, hand written from a profile of the real files).** Text is nvarchar at
+about twice the longest value (ids 32 to `nvarchar(64)`, `item_key` 35 to 80, `because` 227 to 512,
+`transcript` 107 to 256); no `nvarchar(max)`, nothing needs it. No float anywhere: money
+`decimal(12,2)`, scores and risks `decimal(9,6)`, `avg_price` `decimal(14,6)`, `hold_seconds`
+`decimal(9,1)`, `silence_pct` and `compound` `decimal(7,4)`; whole numbers use `tinyint`
+(`is_late`, `review_score`), `smallint` (`order_item_id`) or `int` (`product_weight_g`, which is whole
+grams); datetimes `datetime2(0)`. NOT NULL everywhere except `product_category_name` (610 blanks),
+`product_weight_g` (2), `review_score` and `review_creation_date` (827). Primary key on each
+table's natural key (`Clickstream`: clustered index on `session_id`, which repeats), 19 indexes
+including the Power BI join paths and `seller_state` for row-level security. Foreign keys: all
+nine candidates were counted on the real data and had 0 orphans (the `item_key` link was checked
+both ways); eight are declared (the reverse `FactOrderItems` to `LatePredictions` one is not, a
+cycle). View `dbo.vw_SellerScorecard`: `DimSeller` left joined to the three seller-level tables,
+3,095 rows, 2,414 of them with no AHP score (below the 30-item threshold).
+
+**Loader (`src/load_sql.py`).** Reads every CSV as text, converts to the DDL type and raises on
+anything that would need rounding, truncating or a NULL in a NOT NULL column, all before the
+database is touched; checks each CSV's row count against `docs/powerbi_setup.md`; drops the selected
+tables in one transaction, then creates, loads (`fast_executemany`, 10,000-row batches) and
+verifies each table in its own transaction. Verification: SQL count = CSV count = docs count, plus
+one exact checksum (price x 100, late risk x 1e6, AHP score x 1e6, weight, hold seconds x 10,
+seconds since 2000 of `event_time`, `LEN(because)`; `DimSeller` and `DimCustomer` have no numeric
+column, so theirs is `SUM(LEN(state))`, a weak check). A mismatch rolls the table back and exits 1;
+the first failure stops the run. Safety: exact database name, exact table names, an allow-list on
+every statement (no `DROP DATABASE`, `ALTER`, `EXEC`, logins, `sys.*`, other tables), `--dry-run`
+opens no connection, `--verify-only` only reads, `--only` is refused for a table that others
+reference. Constants live in the module rather than `config.py` to keep the exception to three files.
+
+**Real run.** Dry run 11.4 s (reads and type-checks all CSVs, no connection). Full load 42 s wall,
+33.2 s inside the loader (FactOrderItems 16.7 s, LatePredictions 6.3 s, Clickstream 5.4 s,
+DimCustomer 2.9 s, the rest under 1.2 s each); a second full load through `.\tasks.ps1 load-sql`
+took 41 s and gave the same result, so drop-and-recreate over existing foreign keys works.
+`--verify-only` 0.8 s. All 10 tables and the view: rows loaded = expected, status OK. Read back
+from SQL independently: 1,298 `because` rows contain the em dash, 2 NULL weights, 610 NULL
+categories, 827 NULL review scores, longest `transcript` 107, longest `quadrant` 22, longest
+`item_key` 35, average `is_late` 0.079082, sum of price 13,220,248.93, 8 foreign keys all trusted.
+
+**Tests.** `tests/test_load_sql.py`: 75 tests, no live database needed for 74 of them. The one
+integration test (`sql_server` marker, read-only) runs when the database is reachable and its
+tables are loaded, and skips itself otherwise (it skipped before the first load and passed after).
+They cover schema parsing, CSV/DDL column and type fit, the safety rules, dry run opening no
+connection, and a fake connection proving that a count or checksum mismatch rolls back and exits
+non-zero. Gates after the load: `ruff check .` clean, `mypy src` clean on 13 files, full
+`pytest`: **273 passed** in 300 s (198 existing + 75 new).
+
+**Fixed while building.** The CSV has `item_key` as its last column and the DDL has it first, so
+columns are matched by name. My first `SELECT` guard let `SELECT ... FROM sys.databases` through;
+it now requires `FROM dbo.<loader object>` and rejects `sys.`, `INFORMATION_SCHEMA`, other
+databases and `@@`.
+
+**Not done / caveats.** The Makefile has no `load-sql` target (only `tasks.ps1` was asked for).
+`TrustServerCertificate=yes` skips certificate validation, acceptable for a local instance but
+not for a remote one. The pre-existing `DimCustomer` and `DimProduct` were dropped without a
+backup; their row counts (99,441 and 32,951) already matched the CSVs.

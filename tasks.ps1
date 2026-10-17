@@ -7,7 +7,7 @@
 #>
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("setup", "data", "models", "export", "run", "app", "test", "lint", "check")]
+    [ValidateSet("setup", "data", "models", "export", "load-sql", "run", "app", "test", "lint", "check")]
     [string]$Task
 )
 
@@ -46,6 +46,14 @@ function Invoke-Export {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
+function Invoke-LoadSql {
+    # Loads data/export/*.csv into SQL Server (owner-authorised exception; see src/load_sql.py).
+    # Extra arguments after the task name are not passed on; run python -m src.load_sql directly
+    # for --dry-run, --verify-only or --only <table>.
+    & $VenvPython -m src.load_sql
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
 function Invoke-Run {
     & $VenvPython run_all.py
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -78,6 +86,7 @@ switch ($Task) {
     "data"   { Invoke-Data }
     "models" { Invoke-Models }
     "export" { Invoke-Export }
+    "load-sql" { Invoke-LoadSql }
     "run"    { Invoke-Run }
     "app"    { Invoke-App }
     "test"   { Invoke-Test }

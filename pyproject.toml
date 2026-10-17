@@ -21,9 +21,10 @@ strict = true
 exclude = ["^app/", "^\\.venv/"]
 
 [[tool.mypy.overrides]]
-module = ["pandas.*", "pyarrow.*", "sklearn.*", "joblib.*", "vaderSentiment.*", "yaml.*"]
+module = ["pandas.*", "pyarrow.*", "sklearn.*", "joblib.*", "vaderSentiment.*", "yaml.*", "pyodbc.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = ["sql_server: needs a reachable local SQL Server with the loaded database (auto-skipped otherwise)"]

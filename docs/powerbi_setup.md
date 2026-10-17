@@ -24,7 +24,8 @@ table if the pipeline is rerun on different data.
 | `discovery_quadrants.csv` | `DiscoveryQuadrants` | Dimension extension (joins to `DimSeller` on `seller_id`) | 1,864 |
 | `seller_recommendations.csv` | `SellerRecommendations` | Dimension extension (joins to `DimSeller` on `seller_id`) | 2,970 |
 
-**Total: 10 tables, 361,860 rows exported.**
+**Total: 10 tables, 461,680 rows exported.** (An earlier version of this file said 361,860;
+the ten per-table counts above were right, their sum was not.)
 
 `AhpRanking` carries two versions of the review and on-time criteria: `avg_review_score` and
 `on_time_rate` are the **shrunk** values used for scoring (pulled toward the marketplace mean,
@@ -34,7 +35,51 @@ columns for any visual labelled "average review" or "on-time rate". `n_reviewed`
 of distinct reviewed orders and `n_orders` the number of distinct delivered orders (the n used
 for shrinkage); `order_volume` counts items sold (order lines), not distinct orders.
 
-## Import steps (SSMS, manual)
+## Load into SQL Server
+
+Use the loader instead of the Import Flat File wizard:
+
+```powershell
+.\tasks.ps1 load-sql                       # same as: python -m src.load_sql
+python -m src.load_sql --dry-run           # check everything, open no connection
+python -m src.load_sql --verify-only       # compare the database with the CSVs, change nothing
+python -m src.load_sql --only CallSentiment --only Clickstream   # reload just these tables
+```
+
+What it does:
+
+1. Connects to `localhost\SQLEXPRESS` (override with `--server` or `ECOM_SQL_SERVER`) with
+   Windows Authentication. No password exists anywhere. It refuses any database other than
+   `EcomDecisionIntelligence`, which **must already exist** (create it once in SSMS with
+   `CREATE DATABASE [EcomDecisionIntelligence];`; the loader never creates or drops a database).
+2. Reads the ten CSVs from `data/export/`, checks every value fits the column type in
+   `sql/schema.sql` (nothing is rounded or truncated silently) and checks each CSV's row count
+   against the table above, all before touching the database.
+3. Drops and recreates only the ten tables and the view `dbo.vw_SellerScorecard`, in dependency
+   order, with primary keys, the eight foreign keys and the Power BI join indexes from
+   `sql/schema.sql`. Each table is created, loaded in batches of 10,000 and verified inside one
+   transaction.
+4. Verifies each table: SQL row count = CSV row count = the count in the table above, plus one
+   exact checksum column per table. On any mismatch that table is rolled back and the process
+   exits non-zero.
+5. Prints a final table (table, rows loaded, expected, status, seconds).
+
+After a re-export (`python -m src.export_sql` or `run_all.py --export`) run `load-sql` again; if
+the row counts changed, update the table above first (the loader refuses to run while they
+disagree, which is how a stale count gets noticed). `sql/schema.sql` also runs on its own in
+SSMS if you only want the empty tables. `dbo.vw_SellerScorecard` joins `DimSeller` to
+`AhpRanking`, `DiscoveryQuadrants` and `SellerRecommendations` with left joins, so all 3,095
+sellers stay in the view; 2,414 of them have no AHP score because the AHP ranking only covers
+sellers with 30 or more items sold.
+
+## Import steps (SSMS wizard, manual; superseded by the loader above)
+
+The wizard guesses types from the first rows of each file and gets several wrong for these
+exports: `DimProduct.product_weight_g` has two blanks (the first at row 8,578) so the column is
+guessed NOT NULL and the import fails; `seller_recommendations.because` contains an em dash and
+the file has no byte-order mark; and several text columns grow longer than the sampled rows
+(`item_key`, the category names, `quadrant`), so they are truncated. Use the loader. The manual
+steps are kept only for reference:
 
 1. Open SSMS, connect to the local SQL Server Express instance.
 2. Right-click the target database -> **Tasks -> Import Flat File**.
@@ -67,6 +112,8 @@ section 6.3).
 
 ## Open items / not yet done
 
-- SSMS import itself: not run (manual, outside Claude Code).
+- SQL Server load: done by `python -m src.load_sql` (Stage 7, `BUILD_LOG.md`); all ten tables
+  and the view verified against the CSVs. The older hand-imported `DimCustomer` and `DimProduct`
+  tables were replaced by it.
 - Power BI Desktop model build, DAX measures, dashboard pages, paginated
   report, row-level security (T4-T15): not started.
