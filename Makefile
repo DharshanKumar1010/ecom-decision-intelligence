@@ -1,4 +1,4 @@
-.PHONY: setup data models export load-sql run app test lint check
+.PHONY: setup data models export load-sql verify rebuild run app test lint check
 
 VENV_PY := .venv/bin/python
 ifeq ($(OS),Windows_NT)
@@ -43,3 +43,13 @@ lint:
 	$(VENV_PY) -m mypy src
 
 check: lint test
+
+# Every check, like `.	asks.ps1 verify`: runs all of them, then fails if any failed.
+verify:
+	@fail=0; 	$(VENV_PY) -m ruff check . || fail=1; 	$(VENV_PY) -m mypy src || fail=1; 	$(VENV_PY) -m pytest -q || fail=1; 	$(VENV_PY) -m src.load_sql --verify-only || fail=1; 	$(VENV_PY) scripts/make_results.py --check || fail=1; 	$(VENV_PY) scripts/app_smoke.py || fail=1; 	exit $$fail
+
+# Full pipeline with the CSV export, reload SQL Server, then verify everything.
+rebuild:
+	$(VENV_PY) run_all.py --export
+	$(VENV_PY) -m src.load_sql
+	$(MAKE) verify

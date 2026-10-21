@@ -53,7 +53,7 @@ data/export (10 CSVs) --> src/load_sql.py --> SQL Server --> Power BI (by hand)
 | check | `.\tasks.ps1 verify` | Lint, type check, all tests, the live SQL comparison, a freshness check of `reports/RESULTS.md` and a headless run of every page. |
 | all | `.\tasks.ps1 rebuild` | Step 1 with export, step 2, then `verify`. |
 
-`Makefile` has equivalent targets for `make` users (`setup data models export load-sql run app test lint check`).
+`Makefile` has equivalent targets for `make` users (`setup data models export load-sql verify rebuild run app test lint check`).
 
 ## Where the results are
 

@@ -83,6 +83,10 @@ The old hand-imported `DimCustomer` and `DimProduct` were replaced.
   reviews, documented, not changed), the rules re-implemented independently matched all 2,970 actions, 12 of 12 deliberate breaks are
   now caught by tests, a clean-room rebuild is byte-identical, and the scorecard view's `items_sold` is filled for every seller
   (view reloaded). Details: `docs/archive/FULL_AUDIT_REPORT.md`, `docs/archive/CLAIM_REGISTER.md`.
+- *Polish round 2.* Thin-evidence sellers read "Keep for now: too few orders to warn or suspend" (gates read from the rules); Discovery headings
+  say top 10 of N; Design's rate and ranking-score tooltip follow Intelligence; real heading levels, tab icon, linked Home, larger small fonts,
+  responsive boxes; five reason texts corrected where the data did not support them (wording only, actions identical); the loader's allow-list now
+  also refuses `SELECT ... INTO`, `#`, `EXEC` and multi-statement calls; Makefile `verify`/`rebuild`. Details: `docs/archive/POLISH2_REPORT.md`.
 
 ## Corrections that mattered
 

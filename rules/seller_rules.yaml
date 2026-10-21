@@ -96,6 +96,12 @@
 # (90th percentile of 1,847 sellers with >= 5 items and >= 3 orders; exact value 0.4757).
 # See docs/knowledge_engineering.md section 11.
 
+# Reason texts (polish round 2): the because texts of R05, R06, R08, R10 and R11 were checked against the data. R06 and
+# R11 said "established sellers" (30+ items sold) for a score that exists for the 5+ items pool (0.711 is the 90th percentile
+# of the 1,864 scored sellers but only the 81st of the 681 established ones); R08 pointed at a CLAUDE.md figure that no
+# longer exists; R05 said "90th-percentile territory" for a level the 94th percentile of sellers with enough history
+# reaches; R06 and R10 carried a stale "recalibrated" remark. Wording only: no condition, threshold or priority changed.
+
 - id: R01
   priority: 100
   if:
@@ -122,7 +128,7 @@
     - {fact: ahp_score, op: ">=", value: 0.711}
     - {fact: avg_late_risk, op: "<", value: 0.339}
   then: Feature
-  because: "AHP composite score in the top 10% of established sellers, with predicted late-delivery risk at or below the median (recalibrated to RandomForest's real median) — a proven, low-risk top performer worth featuring."
+  because: "Quality score in the top 10% of the sellers that have one (those with at least 5 items sold), with a late-risk score below the median of all sellers: a proven, low-risk top performer worth featuring."
 
 - id: R07
   priority: 88
@@ -146,7 +152,7 @@
     - {fact: is_hidden_gem, op: "==", value: true}
     - {fact: avg_late_risk, op: "<", value: 0.3}
   then: Promote
-  because: "Strong quality signals with low visibility and predicted late-delivery risk below CLAUDE.md's original Promote threshold. A reasonable candidate to feature and grow, broader (and lower-confidence) than R09's tighter band."
+  because: "A hidden gem (strong quality signals, few items sold) whose late-risk score is below 0.3, which holds for about half of the hidden gems. A reasonable candidate to feature and grow, broader and lower-confidence than R09's tighter band."
 
 - id: R03
   priority: 70
@@ -173,7 +179,7 @@
     - {fact: order_volume, op: ">=", value: 5}
     - {fact: n_orders, op: ">=", value: 3}
   then: Warn
-  because: "More than a quarter of a seller's own items arrived late (90th-percentile territory), with at least 5 items sold and 3 delivered orders to trust the rate."
+  because: "More than a quarter of a seller's own items arrived late, a level that only the worst 6% of sellers with enough history reach, with at least 5 items sold and 3 delivered orders to trust the rate."
 
 - id: R10
   priority: 50
@@ -182,7 +188,7 @@
     - {fact: avg_review, op: ">=", value: 4.28}
     - {fact: order_volume, op: ">=", value: 5}
   then: Keep
-  because: "At-or-below-median predicted risk (recalibrated to RandomForest's real median), at-or-above-median reviews, and enough items sold to be a real track record — no reason to change status."
+  because: "Late-risk score at or below the median of all sellers, an average review at or above the median seller, and at least 5 items sold to be a real track record: no reason to change status."
 
 - id: R11
   priority: 48
@@ -190,7 +196,7 @@
     - {fact: ahp_score, op: ">=", value: 0.549}
     - {fact: late_rate, op: "<=", value: 0.10}
   then: Keep
-  because: "AHP score above the bottom decile of established sellers and an actual late-delivery rate at or below the 75th percentile — a solidly average-or-better seller."
+  because: "Quality score above the bottom decile of the sellers that have one, and an actual late-delivery rate at or below the 75th percentile of all sellers: a solidly average-or-better seller."
 
 - id: R12
   priority: 1

@@ -303,7 +303,7 @@ def test_intelligence_technical_details_carry_the_synthetic_tag(real_outputs: No
     bounce = next(m.value for m in at.markdown if "Bounce rate" in m.value)
     assert tag in funnel_heading and tag in bounce
     assert text.count(tag) >= 5  # two sections, the funnel table, the bounce line, devices, agents
-    headings = [m.value for m in at.markdown if m.value.startswith("###")]
+    headings = [m.value for m in at.markdown if m.value.startswith("## ")]
     assert all(tag in h for h in headings if "Funnel" in h or "Call sentiment by agent" in h)
     funnel = next(df.value for df in at.dataframe if "From the first step" in df.value.columns)
     assert {"Viewed a page", "Added to cart", "Reached checkout", "Purchased"} <= set(

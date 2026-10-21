@@ -103,7 +103,7 @@ def _scatter(quadrants: pd.DataFrame, quality_line: float, popularity_line: floa
         fig.add_annotation(
             x=x, y=y, xref="paper", yref="paper", showarrow=False, xanchor=xanchor,
             yanchor=yanchor, text=f"<b>{text}</b>", bgcolor="rgba(12,16,21,0.8)",
-            font={"size": 12, "color": theme.QUADRANTS[quadrant].text},
+            font={"size": 13, "color": theme.QUADRANTS[quadrant].text},
         )
     fig.update_layout(
         xaxis={"title": "Popularity: items sold (log scale)", "type": "log", "showgrid": False},
@@ -150,11 +150,13 @@ def _gems_tables(quadrants: pd.DataFrame, popularity_line: float) -> None:
     caption("Both lists are ranked by quality score (shrunk average review and on-time "
             "delivery, price and items sold), so the review column is not in order.")
     note(f"By definition, hidden gems have under {fmt_num(popularity_line, 0)} items sold, so "
-         "most picks are directional rather than proven.")
+         "most picks are directional rather than proven. Each list shows the top "
+         f"{fmt_int(_TOP_N)}; the full list is in the download below and under Technical details.")
     for tier, label in ((TIER_ACTIONABLE, f"Stronger evidence ({_N_CONF}+ items sold)"),
                         (TIER_WATCHLIST, f"Early signal (under {_N_CONF} items sold)")):
         total = int(counts.get(tier, 0))
-        st.markdown(f"**{label}: {fmt_int(total)} sellers**")
+        shown_n = min(_TOP_N, total)
+        st.markdown(f"**{label}: top {fmt_int(shown_n)} of {fmt_int(total)} sellers**")
         rows = everyone[everyone["tier"] == tier].head(_TOP_N)
         if tier == TIER_ACTIONABLE and total < _TOP_N:
             st.markdown(f"Only {total} hidden gems have {_N_CONF}+ items sold, so this list is "
@@ -202,7 +204,8 @@ def render() -> None:
         )
         note(ITEMS_SOLD_NOTE)
         st.markdown("**Top hidden gems per tier, with full seller ids**")
-        table(with_tier_labels(top_hidden_gems(quadrants, n=_TOP_N, tiered=True)),
+        top = with_tier_labels(top_hidden_gems(quadrants, n=_TOP_N, tiered=True))
+        table(top.drop(columns=["confidence"]),  # the evidence tier says the same in words
               {"ahp_score": "num4", "order_volume": "int"}, overrides={"ahp_score": _SCORE_LABEL})
         st.markdown("**Every plotted seller**")
         table(quadrants.sort_values("ahp_score", ascending=False),

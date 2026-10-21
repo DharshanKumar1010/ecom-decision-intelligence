@@ -367,9 +367,9 @@ def render() -> None:
 
     subtitle(_SUBTITLE, explain.design_answer(auc, base_rate))
     kpis([
-        ("Late-delivery rate", fmt_pct(base_rate, 1),
+        ("Late-delivery rate", fmt_pct(base_rate, 2),
          "Share of order items that arrive after the estimated date."),
-        ("Ranking score", f"{auc * 100:.0f}%", explain.auc_sentence(auc)),
+        ("Late-order ranking score", f"{auc * 100:.0f}%", explain.ranking_score_help(auc)),
         ("Inputs used", f"{len(config.ALLOWED_FEATURES)}",
          "Facts about an order that the models use to estimate its late risk."),
     ])

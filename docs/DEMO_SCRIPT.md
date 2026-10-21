@@ -15,6 +15,16 @@ dashboard and this script ever disagree, the dashboard wins**; re-run the pipeli
 orders** for the marketplace total. They differ because items sold counts order lines: an
 order with three products is three items sold but one delivered order.
 
+> **Before you present.**
+> - Open every page once before you start. A page's first (cold) load takes about 8 to 10
+>   seconds and later loads 2 to 4, so a cold page looks frozen in front of an audience.
+> - Keep the Streamlit terminal window open (closing it stops the app) and set the browser
+>   zoom to 100 to 125 percent.
+> - On the Implementation page a seller with too little history shows the headline "Keep for
+>   now: too few orders to warn or suspend" instead of a plain "Keep". Say: "Keep here means we
+>   do not have enough orders yet to warn or suspend this seller, not that the seller is fine."
+>   Seller 010da0602d7774602cd1b3f5fb7b709e (paste it into the search box) is the example.
+
 ---
 
 ## The 5-minute walkthrough
@@ -42,7 +52,7 @@ Each page: what to click, then two sentences to say. Roughly 45 seconds each.
 
 ### 2. Design: "How likely is an order to arrive late, and why?"
 
-*Click:* point at the ranking score, then the bars, then "What if an input changes?".
+*Click:* point at the late-order ranking score, then the bars, then "What if an input changes?".
 
 > "On orders it never saw, a random forest ranks a late order above an on-time one about 74%
 > of the time, where 50% is a coin flip. Its strongest signal is the month of purchase, then

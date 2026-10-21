@@ -330,6 +330,6 @@ def test_each_synthetic_heading_on_intelligence_carries_the_tag(
     heading: str, real_outputs: None
 ) -> None:
     at = _run("Intelligence")
-    lines = [m.value for m in at.markdown if m.value.startswith(f"### {heading}")]
+    lines = [m.value for m in at.markdown if m.value.startswith(f"## {heading}")]
     assert len(lines) == 1, f"heading {heading!r} not found exactly once"
     assert 'class="tag">Synthetic data' in lines[0]

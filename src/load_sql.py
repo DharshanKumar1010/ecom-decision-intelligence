@@ -174,18 +174,32 @@ def split_statements(sql: str) -> list[str]:
     return [part.strip() for part in strip_comments(sql).split(";") if part.strip()]
 
 
-def assert_statement_allowed(sql: str) -> None:
+_INTO = re.compile(r"\bINTO\b", re.IGNORECASE)
+_INSERT_INTO = re.compile(r"^INSERT\s+INTO\s+dbo\.\w+\s*\(", re.IGNORECASE)
+
+
+def assert_statement_allowed(sql: str, *, batch: bool = False) -> None:
     """Check every statement in `sql` against the allow-list.
 
     Only CREATE TABLE/INDEX/VIEW, DROP TABLE/VIEW IF EXISTS, INSERT and SELECT are
     permitted, and only on the 10 tables and the one view. Keywords that could change
-    anything outside those objects are rejected wherever they appear.
+    anything outside those objects are rejected wherever they appear. Also rejected: any
+    temp-table marker (`#`), `EXEC`/`EXECUTE`, `SELECT ... INTO` (it creates a table), and,
+    unless `batch=True`, more than one statement (a single trailing semicolon is fine).
+    `batch=True` is for the DDL batches read from schema.sql, which hold several statements.
 
     Raises:
         SafetyError: on the first statement that is not allowed.
     """
-    for statement in split_statements(sql):
+    statements = split_statements(sql)
+    if not batch and len(statements) > 1:
+        raise SafetyError(f"only one statement per call is allowed, got {len(statements)}")
+    for statement in statements:
         flat = " ".join(statement.split())
+        if "#" in flat:
+            raise SafetyError(f"temp-table marker '#' is not allowed: {flat[:80]}")
+        if _INTO.search(flat) and not _INSERT_INTO.match(flat):
+            raise SafetyError(f"INTO is only allowed in the loader's own INSERT: {flat[:80]}")
         use = _USE_STATEMENT.match(flat)
         if use:
             if use.group(1) != ALLOWED_DATABASE:
@@ -312,7 +326,7 @@ def parse_schema(text: str) -> Schema:
     drops: list[str] = []
     for batch in _GO.split(text):
         marker = _MARKER.search(batch)
-        assert_statement_allowed(batch)
+        assert_statement_allowed(batch, batch=True)
         if marker is None:
             continue
         kind, name = marker.group(1), marker.group(2)
@@ -769,7 +783,7 @@ def load_table(conn: Any, plan: Plan, table: str) -> TableResult:
     ddl = plan.schema.tables[table]
     try:
         cursor = conn.cursor()
-        assert_statement_allowed(ddl.batch)
+        assert_statement_allowed(ddl.batch, batch=True)
         cursor.execute(ddl.batch)
         insert = insert_statement(ddl)
         assert_statement_allowed(insert)

@@ -96,7 +96,7 @@ Defender, the registry, execution policy or file ACLs, and never use `Unblock-Fi
 CLAUDE.md  README.md  BUILD_LOG.md  tasks.ps1  Makefile  run_all.py  requirements.txt  pyproject.toml
 src/        config.py build_tables.py synthetic.py clickstream.py sentiment.py predict.py ahp.py
             discovery.py expert.py explain.py export_sql.py load_sql.py
-app/        Home.py pages/1..6_*.py _common.py _components.py _format.py _labels.py _theme.py
+app/        Home.py pages/1..6_*.py _common.py _components.py _format.py _labels.py _theme.py static/icon.png
             (.streamlit/config.toml: dark theme)
 rules/      seller_rules.yaml
 sql/        schema.sql                      (tables, keys, indexes, dbo.vw_SellerScorecard)
@@ -171,7 +171,8 @@ fails if a threshold stops discriminating or R01/R03 leave their percentile.
 sold; `confidence_flag` at `DISCOVERY_CONFIDENCE_MIN_ORDERS` gives the evidence tier; `top_hidden_gems` never returns a
 non-gem; `build_seller_facts` builds the contract the rules read.
 
-7.6 **`explain.py`**: plain-language sentences for the UI, the tick list and `near_miss` ("what would have to change");
+7.6 **`explain.py`**: plain-language sentences for the UI, the tick list, `near_miss` ("what would have to change") and the thin-evidence check
+(`evidence_status`, gates read from the rules);
 it quotes rule thresholds from the rule objects, never from literals.
 
 7.7 **Dashboard (`app/`)**: Streamlit, six pages named after the decision phases, one dark template (`.streamlit/config.toml`,

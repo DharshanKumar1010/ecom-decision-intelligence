@@ -94,7 +94,7 @@ def _build_template() -> go.layout.Template:
     axis = {
         "linecolor": BORDER,
         "tickcolor": BORDER,
-        "tickfont": {"color": TEXT_MUTED, "size": 12},
+        "tickfont": {"color": TEXT_MUTED, "size": 13},
         "title": {"font": {"color": TEXT_MUTED, "size": 13}},
         "zeroline": False,
         "automargin": True,
@@ -109,7 +109,7 @@ def _build_template() -> go.layout.Template:
             xaxis={**axis, "showgrid": False},
             yaxis={**axis, "showgrid": True, "gridcolor": GRID},
             legend={"orientation": "h", "yanchor": "top", "y": -0.18, "xanchor": "left",
-                    "x": 0, "bgcolor": "rgba(0,0,0,0)", "font": {"color": TEXT_MUTED, "size": 12}},
+                    "x": 0, "bgcolor": "rgba(0,0,0,0)", "font": {"color": TEXT_MUTED, "size": 13}},
             hoverlabel={"bgcolor": SURFACE, "bordercolor": BORDER, "font": {"color": TEXT}},
             coloraxis={"colorbar": {"outlinewidth": 0, "tickfont": {"color": TEXT_MUTED},
                                     "title": {"font": {"color": TEXT_MUTED}}}},

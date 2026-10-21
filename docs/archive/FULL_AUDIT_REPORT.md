@@ -131,11 +131,11 @@ Hidden Gems **437**; Sellers Ranked **681**. No differences.
 
 ## G. Hashes, tests, reproducibility
 
-- **Tests:** 338 at the start (`.	asks.ps1 verify`, exit 0) and **385 passed** at the end, twice in a row (a plain `pytest` run, then the
-  pytest step of `.	asks.ps1 verify`): no flaky test. 47 tests were added (`tests/test_app_edge.py`, `tests/test_build_tables.py`, view,
+- **Tests:** 338 at the start (`.\tasks.ps1 verify`, exit 0) and **385 passed** at the end, twice in a row (a plain `pytest` run, then the
+  pytest step of `.\tasks.ps1 verify`): no flaky test. 47 tests were added (`tests/test_app_edge.py`, `tests/test_build_tables.py`, view,
   document and tooltip tests). Only one test takes over 30 s: the one-off setup of `tests/test_predict.py::test_late_risk_in_unit_interval`
   (38.8 s); next are `test_seed_reproducibility` (25.9 s) and `test_clickstream_causal_consistency` (15.6 s).
-- **`.	asks.ps1 verify` at the end:** ruff PASS, mypy PASS (13 files), pytest PASS, SQL verify-only PASS, RESULTS.md fresh PASS, app smoke PASS.
+- **`.\tasks.ps1 verify` at the end:** ruff PASS, mypy PASS (13 files), pytest PASS, SQL verify-only PASS, RESULTS.md fresh PASS, app smoke PASS.
 - **Manifest Z0 (start) against Z1 (end), 126 files:** the 48 generated files that are checked (`reports/`, `data/processed/`,
   `data/export/`, `models/`, `sql/`) are byte-identical except `reports/RESULTS.md` (gem-outcome line and the three review averages) and
   `sql/schema.sql` (the approved view change). Models, parquet files, exports, `seller_recommendations.csv`, `ahp_ranking.csv`,
@@ -151,12 +151,20 @@ Hidden Gems **437**; Sellers Ranked **681**. No differences.
 
 ## H. Needs your decision
 
+Status as of the second polish round (2026-10-21); the original wording of each item is kept.
+
 1. Whether to harden `assert_statement_allowed` against `SELECT ... INTO` (F12). It is a change to `src/load_sql.py`.
+   **Resolved by the second polish round** (`docs/archive/POLISH2_REPORT.md`, F9): the allow-list now also refuses `SELECT ... INTO`,
+   any `#`, `EXEC`/`EXECUTE` and more than one statement per call (DDL batches from `sql/schema.sql` are declared batches).
 2. The Olist licence text: confirm on Kaggle (I could not read it).
+   **Still open**: the Kaggle page could not be read by the fetch tool; only you can confirm the licence terms.
 3. Optional: apply the review tie-break fix (F1) after the Power BI report is finished; the evidence is in section C.
+   **Still open, by your decision**: you declined the fix and chose to document it (known limitation in
+   `docs/knowledge_engineering.md`); revisit it once the Power BI report is finished.
 4. `CLAUDE.md` constraints that still match your decisions: SQL exception (three files; `src/load_sql.py` and `sql/schema.sql` were
    edited under the Tier 2 approval for F2), no neural networks/SVM/KNN (now mirrored in `docs/SYLLABUS_MAP.md`), numbers live in
    `reports/RESULTS.md`. None no longer matches.
+   **Resolved earlier** (in the audit itself); the second polish round touched `src/load_sql.py` only to harden it, inside the same exception.
 
 ## I. Still to check by hand
 

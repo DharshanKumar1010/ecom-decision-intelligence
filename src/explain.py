@@ -126,6 +126,20 @@ def feature_label(name: str) -> str:
 # --------------------------------------------------------------------------
 
 
+def ranking_score_help(auc: float) -> str:
+    """Tooltip for the headline ranking score: the ROC-AUC read as a ranking chance.
+
+    It is the chance that a randomly chosen late order is ranked above a randomly chosen
+    on-time one (50% is a coin flip). It is not accuracy and not the probability that an
+    order is late.
+    """
+    return (
+        "The chance that a randomly chosen late order is ranked above a randomly chosen "
+        f"on-time order: about {auc * 100:.0f}% here, where 50% is a coin flip. It is not "
+        "accuracy and not the probability that an order will be late."
+    )
+
+
 def auc_sentence(auc: float) -> str:
     """What a ROC-AUC means: the chance that a randomly chosen late order is ranked above
     a randomly chosen on-time one.
@@ -398,6 +412,96 @@ def near_miss(facts: Mapping[str, Any], rules: Sequence[Rule], limit: int = 3) -
         closest_per_action.values(), key=lambda n: (len(n.gaps), -n.priority, n.rule_id)
     )
     return ordered[:limit]
+
+
+# --------------------------------------------------------------------------
+# Thin evidence: a Keep that only means "not enough orders to say anything else"
+# --------------------------------------------------------------------------
+
+THIN_KEEP_HEADLINE = "Keep for now: too few orders to warn or suspend"
+
+# The facts that measure how much independent history a seller has, with how each is worded.
+_EVIDENCE_FACTS: tuple[tuple[str, str, str], ...] = (
+    ("order_volume", "item sold", "items sold"),
+    ("n_orders", "delivered order", "delivered orders"),
+    ("n_reviewed", "reviewed order", "reviewed orders"),
+)
+_WARN_OR_SUSPEND = frozenset({"Warn", "Suspend"})
+
+
+@dataclass(frozen=True)
+class EvidenceGap:
+    """One minimum a seller does not reach: what it has, what a Warn or Suspend rule needs."""
+
+    fact: str
+    have: float
+    minimum: float
+
+
+@dataclass(frozen=True)
+class EvidenceStatus:
+    """A seller's history against the minimums of the Warn and Suspend rules."""
+
+    minimums: dict[str, float]
+    have: dict[str, float]
+    gaps: tuple[EvidenceGap, ...]
+
+    @property
+    def below(self) -> bool:
+        """True if the seller is under at least one minimum."""
+        return bool(self.gaps)
+
+
+def warn_suspend_minimums(rules: Sequence[Rule]) -> dict[str, float]:
+    """The lowest `>=` threshold each evidence fact carries in any Warn or Suspend rule.
+
+    Read from the rule objects (so from `rules/seller_rules.yaml`), never typed here: with
+    fewer than this many items sold, delivered orders or reviewed orders no Warn or Suspend rule
+    that gates on that fact can fire. A fact no such rule gates on is absent from the result.
+    """
+    minimums: dict[str, float] = {}
+    for rule in rules:
+        if rule.action not in _WARN_OR_SUSPEND:
+            continue
+        for condition in rule.conditions:
+            if condition.op == ">=" and condition.fact in {f for f, _, _ in _EVIDENCE_FACTS}:
+                value = float(condition.value)
+                minimums[condition.fact] = min(value, minimums.get(condition.fact, value))
+    return minimums
+
+
+def evidence_status(facts: Mapping[str, Any], rules: Sequence[Rule]) -> EvidenceStatus:
+    """Compare a seller's items sold, delivered orders and reviewed orders with the minimums.
+
+    A missing count counts as zero. `gaps` lists every minimum the seller is under, so the
+    caller can say by how much.
+    """
+    minimums = warn_suspend_minimums(rules)
+    have: dict[str, float] = {}
+    gaps: list[EvidenceGap] = []
+    for fact, _, _ in _EVIDENCE_FACTS:
+        value = facts.get(fact)
+        have[fact] = 0.0 if value is None or _is_missing(value) else float(value)
+        if fact in minimums and have[fact] < minimums[fact]:
+            gaps.append(EvidenceGap(fact, have[fact], minimums[fact]))
+    return EvidenceStatus(minimums, have, tuple(gaps))
+
+
+def _count_phrase(fact: str, number: float) -> str:
+    singular, plural = next((s, p) for f, s, p in _EVIDENCE_FACTS if f == fact)
+    return f"{_fmt(number)} {singular if number == 1 else plural}"
+
+
+def evidence_sentence(status: EvidenceStatus) -> str:
+    """One plain sentence: what the seller has against the minimums for Warn or Suspend."""
+    have = ", ".join(_count_phrase(f, status.have[f]) for f, _, _ in _EVIDENCE_FACTS)
+    needs = ", ".join(
+        _count_phrase(f, status.minimums[f]) for f, _, _ in _EVIDENCE_FACTS if f in status.minimums
+    )
+    return (
+        f"This seller has {have}; a warning or a suspension needs at least {needs}, "
+        "so Keep here means not enough history yet, not a clean bill of health."
+    )
 
 
 # --------------------------------------------------------------------------

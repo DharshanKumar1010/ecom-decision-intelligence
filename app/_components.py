@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import html
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -32,27 +33,34 @@ ITEMS_SOLD_NOTE = (
     "delivered orders counts each order once."
 )
 SYNTHETIC_TAG = "Synthetic data"
+# Tab icon: a small local PNG (no remote asset, no emoji).
+PAGE_ICON = Path(__file__).resolve().parent / "static" / "icon.png"
 
 _CSS = f"""
 <style>
 .block-container {{ padding-top: 2.5rem; padding-bottom: 3rem; max-width: 1100px; }}
 h1 {{ font-size: 2rem; font-weight: 650; line-height: 1.2; letter-spacing: -0.01em; }}
-h2, h3 {{ font-weight: 600; }}
+h2 {{ font-size: 1.45rem; font-weight: 600; line-height: 1.3; }}
+h3 {{ font-weight: 600; }}
+[data-testid="stHeaderActionElements"] {{ display: none; }}
+[data-testid="stPageLink-NavLink"] p {{ color: {theme.ACCENT}; text-decoration: underline;
+  text-underline-offset: 0.2em; font-weight: 600; }}
 .subtitle {{ color: {theme.TEXT_MUTED}; font-size: 1.05rem; margin: 0 0 1.5rem 0; }}
 [data-testid="stMetricValue"] {{ font-size: 1.8rem; font-weight: 600;
   white-space: normal; overflow: visible; text-overflow: clip; }}
 [data-testid="stMetricValue"] > div {{ white-space: normal; overflow: visible;
   text-overflow: clip; }}
 [data-testid="stMetricLabel"] p {{ color: {theme.TEXT_MUTED}; }}
-.tag {{ color: {theme.TEXT_MUTED}; font-size: 0.75rem; font-weight: 500;
+.tag {{ color: {theme.TEXT_MUTED}; font-size: 0.82rem; font-weight: 500;
   border: 1px solid {theme.BORDER}; border-radius: 0.3rem; padding: 0.05rem 0.4rem;
   margin-left: 0.6rem; vertical-align: middle; }}
-.footer {{ color: {theme.TEXT_MUTED}; font-size: 0.8rem; margin-top: 2.5rem;
+.footer {{ color: {theme.TEXT_MUTED}; font-size: 0.82rem; margin-top: 2.5rem;
   padding-top: 0.75rem; border-top: 1px solid {theme.BORDER}; }}
 .note {{ color: {theme.TEXT_MUTED}; font-size: 0.85rem; }}
 .action-word {{ font-size: 2.6rem; font-weight: 650; line-height: 1.1; margin: 0.2rem 0 0.4rem 0; }}
+.action-word.thin {{ font-size: 1.9rem; line-height: 1.2; }}
 .flow-box {{ border: 1px solid {theme.BORDER}; border-radius: 0.4rem;
-  padding: 1rem 1.1rem; height: 16rem; box-sizing: border-box; overflow: hidden; }}
+  padding: 1rem 1.1rem; min-height: 16rem; box-sizing: border-box; }}
 .flow-note {{ color: {theme.TEXT_MUTED}; font-size: 0.85rem; margin-top: 1.75rem; }}
 .flow-box h4 {{ margin: 0 0 0.5rem 0; font-size: 1.05rem; }}
 .flow-box p {{ margin: 0.15rem 0; color: {theme.TEXT_MUTED}; font-size: 0.9rem; }}
@@ -68,7 +76,11 @@ def _safe(text: str) -> str:
 
 def set_page(title: str) -> None:
     """Page config and shared CSS. Must be the first Streamlit call on a page."""
-    st.set_page_config(page_title=f"{title} | Olist DSS", layout="wide")
+    st.set_page_config(
+        page_title=f"{title} | Olist DSS",
+        page_icon=str(PAGE_ICON) if PAGE_ICON.exists() else None,
+        layout="wide",
+    )
     st.markdown(_CSS, unsafe_allow_html=True)
 
 
@@ -96,9 +108,9 @@ def synthetic_tag() -> str:
 
 
 def section(title: str, synthetic: bool = False) -> None:
-    """Section heading; synthetic data gets a small grey tag beside the title."""
+    """Section heading (h2 under the page's h1 title); synthetic data gets a small grey tag."""
     tag = synthetic_tag() if synthetic else ""
-    st.markdown(f"### {title} {tag}" if tag else f"### {title}", unsafe_allow_html=True)
+    st.markdown(f"## {title} {tag}" if tag else f"## {title}", unsafe_allow_html=True)
 
 
 def caption(text: str) -> None:
@@ -190,12 +202,15 @@ def page_link_or_label(target: str, label: str) -> None:
     """Clickable link to another page, or a plain label if Streamlit can't resolve it.
 
     `st.page_link` raises `StreamlitPageNotFoundError` when no multipage
-    registry exists (e.g. a page executed standalone under `AppTest`).
+    registry exists (e.g. a page executed standalone under `AppTest`); the fallback is an
+    ordinary markdown link to the page's address.
     """
     try:
         st.page_link(target, label=label)
     except StreamlitPageNotFoundError:
-        st.markdown(label)
+        # "pages/3_Choice.py" is served at "/Choice": a plain link needs no page registry.
+        slug = Path(target).stem.split("_", 1)[-1]
+        st.markdown(f"[{label}]({slug})")
 
 
 def run_page(render: Callable[[], None]) -> None:

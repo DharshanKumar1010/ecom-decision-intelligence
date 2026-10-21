@@ -261,13 +261,17 @@ def test_design_kpis_come_from_the_metrics_file(real_outputs: None) -> None:
     metrics = json.loads((config.REPORTS_DIR / "model_metrics.json").read_text(encoding="utf-8"))
     rf = metrics["random_forest"]
     shown = _metrics(at)
-    assert shown["Late-delivery rate"] == f"{rf['base_rate'] * 100:.1f}%"
-    assert shown["Ranking score"] == f"{rf['roc_auc'] * 100:.0f}%"
+    assert shown["Late-delivery rate"] == f"{rf['base_rate'] * 100:.2f}%"
+    assert shown["Late-order ranking score"] == f"{rf['roc_auc'] * 100:.0f}%"
+    assert "Ranking score" not in shown
     assert shown["Inputs used"] == str(len(config.ALLOWED_FEATURES))
     text = _markdown(at)
     assert "The random forest is the primary model" in text
     assert "accuracy" not in text.lower()
-    assert any("coin flip" in m.help for m in at.metric if m.label == "Ranking score")
+    helps = [m.help for m in at.metric if m.label == "Late-order ranking score"]
+    assert helps and "coin flip" in helps[0]
+    assert "randomly chosen late order is ranked above a randomly chosen on-time order" in helps[0]
+    assert "not accuracy and not the probability" in helps[0]
     # Technical details still hold the comparison, and the sensitivity selector works.
     at.selectbox(key="design_sensitivity_model").select("logistic_regression").run()
     assert not at.exception
@@ -335,8 +339,10 @@ def test_discovery_caution_counts_line_table_and_download(real_outputs: None) ->
     gems = quadrants[quadrants["quadrant"] == "Hidden Gem"]
     n_actionable = int((gems["confidence"] == "normal").sum())
     n_watch = int((gems["confidence"] == "low").sum())
-    assert f"Stronger evidence ({n}+ items sold): {n_actionable:,} sellers" in text
-    assert f"Early signal (under {n} items sold): {n_watch:,} sellers" in text
+    top = min(10, n_actionable), min(10, n_watch)
+    assert f"Stronger evidence ({n}+ items sold): top {top[0]:,} of {n_actionable:,}" in text
+    assert f"Early signal (under {n} items sold): top {top[1]:,} of {n_watch:,}" in text
+    assert "the full list is in the download below and under Technical details" in text
     assert (actionable["Confidence"] == "normal").all() and (actionable["Items sold"] >= n).all()
     assert len(actionable) == min(10, n_actionable)
     assert watchlist["Confidence"].str.startswith("low").all()
@@ -373,7 +379,7 @@ def test_implementation_default_seller_is_not_the_default_rule(real_outputs: Non
     row = recommendations.set_index("seller_id").loc[at.session_state["impl_seller"]]
     assert row["rule_id"] != "R12"
     assert _displayed_action(at) == row["action"]
-    assert len(at.metric) == 3  # three fact numbers
+    assert len(at.metric) == 4  # items sold, delivered orders, average review, late rate
     text = _markdown(at)
     assert "Why:" not in text  # the subtitle and the ticked conditions carry the reason
     assert "- ✓" in text or "- ✕" in text
@@ -524,7 +530,10 @@ def test_app_loads_no_remote_resources() -> None:
     pattern = re.compile(r"https?://|@import|<link\b|<script\b", re.IGNORECASE)
     for path in sources:
         assert not pattern.search(path.read_text(encoding="utf-8")), path
-    assert not (APP_DIR / "static").exists()
+    # The only static file is the tab icon (a local PNG); Streamlit's static serving stays off.
+    assert sorted(p.name for p in (APP_DIR / "static").glob("*")) == ["icon.png"]
+    streamlit_config = config.PROJECT_ROOT / ".streamlit" / "config.toml"
+    assert "enableStaticServing" not in streamlit_config.read_text(encoding="utf-8")
 
 
 # --------------------------------------------------------------------------

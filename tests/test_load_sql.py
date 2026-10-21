@@ -102,7 +102,7 @@ def test_schema_text_contains_no_forbidden_statement() -> None:
     code = load_sql.strip_comments(text)
     assert not re.search(r"DROP\s+DATABASE|CREATE\s+DATABASE|ALTER|xp_|sp_|EXEC", code, re.I)
     for batch in re.split(r"^\s*GO\s*$", code, flags=re.M | re.I):
-        assert_statement_allowed(batch)
+        assert_statement_allowed(batch, batch=True)  # schema batches hold several statements
 
 
 def test_schema_with_a_forbidden_batch_is_rejected() -> None:
@@ -282,6 +282,50 @@ def test_statements_outside_the_allow_list_are_refused(sql: str) -> None:
 @pytest.mark.parametrize(
     "sql",
     [
+        "SELECT * INTO dbo.DimSellerCopy FROM dbo.DimSeller",
+        "SELECT seller_id INTO #temp FROM dbo.DimSeller",
+        "SELECT seller_id INTO dbo.FactOrderItems FROM dbo.DimSeller",
+        "SELECT seller_id FROM dbo.DimSeller INTO dbo.AhpRanking",
+        "SELECT COUNT_BIG(*) FROM dbo.DimSeller WHERE seller_id IN (SELECT seller_id FROM #t)",
+        "INSERT INTO #temp (a) VALUES (1)",
+        "DROP TABLE IF EXISTS #temp",
+        "CREATE TABLE #t (a int)",
+        "EXEC('SELECT 1')",
+        "EXECUTE sp_who",
+        "exec ('DROP TABLE dbo.DimSeller')",
+        "SELECT COUNT_BIG(*) FROM dbo.DimSeller; SELECT COUNT_BIG(*) FROM dbo.DimProduct",
+        "SELECT COUNT_BIG(*) FROM dbo.DimSeller; DROP TABLE IF EXISTS dbo.DimSeller",
+        "DROP TABLE IF EXISTS dbo.DimSeller; DROP TABLE IF EXISTS dbo.DimProduct",
+        "INSERT INTO dbo.CallSentiment ([call_id]) VALUES (?); "
+        "INSERT INTO dbo.Clickstream ([a]) VALUES (?)",
+    ],
+)
+def test_into_temp_tables_exec_and_multiple_statements_are_refused(sql: str) -> None:
+    with pytest.raises(SafetyError):
+        assert_statement_allowed(sql)
+
+
+def test_a_single_trailing_semicolon_is_still_one_statement() -> None:
+    assert_statement_allowed("SELECT COUNT_BIG(*) FROM dbo.FactOrderItems;")
+    assert_statement_allowed("DROP TABLE IF EXISTS dbo.DimSeller ;")
+    with pytest.raises(SafetyError):
+        assert_statement_allowed(
+            "SELECT COUNT_BIG(*) FROM dbo.FactOrderItems;;SELECT 1 FROM dbo.DimSeller"
+        )
+
+
+def test_a_ddl_batch_may_hold_several_statements_only_when_declared_a_batch() -> None:
+    batch = "CREATE TABLE dbo.DimSeller (a int); CREATE INDEX IX_a ON dbo.DimSeller (a);"
+    assert_statement_allowed(batch, batch=True)
+    with pytest.raises(SafetyError):
+        assert_statement_allowed(batch)
+    with pytest.raises(SafetyError):  # a batch is still checked statement by statement
+        assert_statement_allowed(batch + " SELECT a INTO #t FROM dbo.DimSeller", batch=True)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
         "DROP TABLE IF EXISTS dbo.DimSeller",
         "DROP VIEW IF EXISTS dbo.vw_SellerScorecard",
         "SELECT COUNT_BIG(*) FROM dbo.FactOrderItems",
@@ -370,7 +414,10 @@ class FakeCursor:
         self._answer = 0
 
     def execute(self, sql: str, *params: Any) -> FakeCursor:
-        load_sql.assert_statement_allowed(sql)
+        # DDL batches from schema.sql hold several statements; everything else must be one.
+        code = load_sql.strip_comments(sql).lstrip()
+        is_ddl_batch = code.startswith(("CREATE TABLE", "CREATE VIEW", "USE"))
+        load_sql.assert_statement_allowed(sql, batch=is_ddl_batch)
         self.conn.executed.append(sql)
         if sql.startswith("SELECT"):
             self._answer = self.conn.answers.get(sql, 0)

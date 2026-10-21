@@ -141,12 +141,14 @@ def _selector(facts: pd.DataFrame, recommendations: pd.DataFrame) -> str:
     return str(chosen)
 
 
-def _result_block(result: InferenceResult) -> None:
+def _result_block(result: InferenceResult, thin_keep: bool = False) -> None:
     fired = result.fired_rule
     swatch = theme.ACTIONS.get(fired.action, theme.ACTIONS["Keep"])
+    css = "action-word thin" if thin_keep else "action-word"
+    headline = explain.THIN_KEEP_HEADLINE if thin_keep else fired.action
     st.markdown(
-        f'<div class="action-word" data-action="{fired.action}" '
-        f'style="color:{swatch.text}">{fired.action}</div>',
+        f'<div class="{css}" data-action="{fired.action}" '
+        f'style="color:{swatch.text}">{headline}</div>',
         unsafe_allow_html=True,
     )
     checks = explain.condition_checks(fired, result.facts)
@@ -156,7 +158,11 @@ def _result_block(result: InferenceResult) -> None:
         note("No stronger rule matched this seller, so the default applies.")
 
 
-def _confidence_line(quadrant_row: pd.DataFrame) -> None:
+def _confidence_line(quadrant_row: pd.DataFrame, thin_keep: bool = False) -> None:
+    if thin_keep:
+        note("Thin evidence: Warn and Suspend rules switch on only once a seller reaches the "
+             "minimums above, so a Keep for such a seller is a wait-and-see, and any quality "
+             "signal from so few orders is directional, not proof.")
     if quadrant_row.empty:
         note(f"Fewer than {config.DISCOVERY_MIN_ORDERS} items sold: no quality score and no group, "
              "so quality-based rules cannot apply to this seller.")
@@ -293,18 +299,23 @@ def render() -> None:
     memory = working_memory(seller_id, row)
     result = InferenceEngine(kb).run(memory.as_facts())
     action = result.fired_rule.action
-    subtitle(_SUBTITLE, explain.ACTION_MEANING.get(action, "See the reason below."))
+    status = explain.evidence_status(result.facts, kb.rules)
+    thin_keep = action == "Keep" and status.below
+    subtitle(_SUBTITLE, explain.evidence_sentence(status) if thin_keep
+             else explain.ACTION_MEANING.get(action, "See the reason below."))
 
-    _result_block(result)
+    _result_block(result, thin_keep)
     review = "n/a" if pd.isna(row["avg_review"]) else fmt_num(row["avg_review"], 2)
     orders = (row["n_orders"], row["n_reviewed"])
     kpis([
         ("Items sold", fmt_int(row["order_volume"]), None),
+        ("Delivered orders", fmt_int(row["n_orders"]),
+         "Distinct orders that contain at least one of this seller's items."),
         ("Average review", review, "Average review score (1 to 5), one review per order."),
         ("Late-delivery rate", fmt_pct(row["late_rate"], 1),
          "Share of this seller's items that really were delivered late."),
     ])
-    _confidence_line(quadrants.loc[quadrants["seller_id"] == seller_id])
+    _confidence_line(quadrants.loc[quadrants["seller_id"] == seller_id], thin_keep)
 
     with technical():
         _technical(result, kb, row,
