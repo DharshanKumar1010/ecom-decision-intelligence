@@ -15,4 +15,6 @@
 | [`archive/AUDIT_REPORT.md`](archive/AUDIT_REPORT.md) | The Stage 7 audit of the repository (23 findings). Its DDL block is superseded by `sql/schema.sql`. |
 | [`archive/CLEANUP_REPORT.md`](archive/CLEANUP_REPORT.md) | What Stage 8 verified, changed and left for decision, with before/after numbers. |
 | [`archive/FINAL_POLISH_REPORT.md`](archive/FINAL_POLISH_REPORT.md) | The last polish round before Power BI: page and Technical-details fixes, the 5-item gate measurement, the checks run and the commit commands. |
+| [`archive/FULL_AUDIT_REPORT.md`](archive/FULL_AUDIT_REPORT.md) | The independent full-project verification: recomputation from the raw files, mutation checks, SQL cross-check, findings and decisions. |
+| [`archive/CLAIM_REGISTER.md`](archive/CLAIM_REGISTER.md) | Every number in the current documents with its evidence and status. |
 | [`../reports/diagnostics/`](../reports/diagnostics/) | One-off experiments behind past decisions; each report starts with a line saying whether it is current or historical. |

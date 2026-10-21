@@ -69,12 +69,15 @@ disagree, which is how a stale count gets noticed). `sql/schema.sql` also runs o
 SSMS if you only want the empty tables. `dbo.vw_SellerScorecard` joins `DimSeller` to
 `AhpRanking`, `DiscoveryQuadrants` and `SellerRecommendations` with left joins, so all 3,095
 sellers stay in the view; 2,414 of them have no AHP score because the AHP ranking only covers
-sellers with 30 or more items sold.
+sellers with 30 or more items sold. Its `items_sold` column counts every seller's items in
+`FactOrderItems` (0 for the 125 sellers with no delivered item), so it is filled for all 3,095 rows
+and sums to the total number of items sold; it used to come from the 5+ items pool and was empty
+for 1,231 sellers.
 
 ## Import steps (SSMS wizard, manual; superseded by the loader above)
 
 The wizard guesses types from the first rows of each file and gets several wrong for these
-exports: `DimProduct.product_weight_g` has two blanks (the first at row 8,578) so the column is
+exports: `DimProduct.product_weight_g` has two blanks (the first at data row 8,579) so the column is
 guessed NOT NULL and the import fails; `seller_recommendations.because` contains an em dash and
 the file has no byte-order mark; and several text columns grow longer than the sampled rows
 (`item_key`, the category names, `quadrant`), so they are truncated. Use the loader. The manual

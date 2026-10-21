@@ -100,14 +100,14 @@ forest 0.74 (0.7367 averaged over five order-grouped folds, spread 0.004). We fi
 0.63 / 0.67 / 0.78, but that split put items from the same order on both sides of the
 train/test line and flattered the forest (it dropped from 0.78 to 0.73 once whole orders were
 held out; we then tuned its leaf size, which lifted it to 0.74 and cut the saved model from
-424 MB to 68 MB). Its lead over the decision tree is smaller than first thought, and the
+421 MB to 68 MB). Its lead over the decision tree is smaller than first thought, and the
 forest has little skill on future months (see question 11). We kept the simpler models
 because you can read them.
 
 **2. Why is the clickstream and the call data synthetic?**
 Olist contains orders, reviews, sellers and products, but no web events and no phone calls.
 We generated both with a fixed seed so the syllabus techniques (funnel analysis, sentiment
-analysis) can be demonstrated, and every place they appear carries a SYNTHETIC tag.
+analysis) can be demonstrated, and every place they appear carries a "Synthetic data" tag.
 
 **3. What does an AUC of 0.74 actually mean? Is that good?**
 Take one late order and one on-time order at random; the model gives the late one the higher
@@ -163,7 +163,9 @@ Each threshold is either a fixed business limit or a percentile of the real data
 percentile ones were recalibrated when the random forest replaced the first model, when the
 quality score began shrinking small sellers toward the average, and when the risk score became
 out-of-fold, because their distributions moved. Warn and Suspend rules also need at least 5
-items sold, so a one-item seller is never warned or suspended on thin evidence. The
+items sold and 3 delivered orders (3 reviewed orders when they read the average review),
+because items of one order are not independent evidence; so a one-item or one-order seller is
+never warned or suspended on thin evidence. The
 rule-by-rule justification is in `docs/knowledge_engineering.md`, and a test fails if the
 thresholds drift out of line again.
 
@@ -174,7 +176,7 @@ delivery.
 **10. Why keep the decision tree and the linear model if the forest is better?**
 Because an ensemble cannot show a printable rule path or one readable weight per input. They
 let you inspect the logic behind the numbers, at a cost in ranking quality that the Design
-page states openly. The forest also has a storage cost: the saved model is about 68 MB (it was 424 MB before its
+page states openly. The forest also has a storage cost: the saved model is about 68 MB (it was 421 MB before its
 leaf size was tuned).
 
 **11. What are the main limits of this project?**
@@ -196,3 +198,53 @@ The Implementation page runs the rules live, and under Technical details it comp
 result with the stored batch file for the chosen seller; a test checks 20+ sellers across all five outcomes. SQL Server and
 Power BI are a separate downstream layer, built by hand from the exported CSVs, and are not
 part of the Python code.
+
+---
+
+## Five hard questions, with honest answers
+
+**13. If no model beats chance on a forward-looking test, why use a random forest at all?**
+Because the two tests ask different questions. On orders it never saw from the same period
+(whole orders held out) the forest ranks a late order above an on-time one about 74% of the
+time, against 69% for the tree and 63% for the linear model, so for ranking and explaining
+historical orders it is the best of the three. Trained on the earliest 80% of orders and tested
+on the latest 20%, none of the three is better than chance (forest 0.52, tree 0.50, linear
+model 0.40), and the later period also had a different late rate (5.2% against 8.6%). So the
+risk score describes and ranks the past; it does not forecast. Rules that read it (the Warn
+rule R03 fires on predicted risk alone) are therefore the part of the system most exposed to
+this limit, and a real deployment would retrain on recent data and monitor the score before
+acting on it.
+
+**14. Why are the clickstream and call data synthetic, and does that make those pages
+meaningless?**
+Olist has no web events and no calls, so both were generated with a fixed seed to demonstrate
+the syllabus techniques (funnel metrics, sentiment analysis). The funnel counts are set by the
+generator, so they say nothing about the marketplace; they show how the method works. No seller
+decision uses them, every place they appear carries a "Synthetic data" tag, and the real
+findings (late risk, quality scores, hidden gems, rules) come from the Olist orders only.
+
+**15. What does "hidden gem" actually prove with fewer than 18 items sold?**
+Not proof. Every hidden gem has fewer than 18 items sold (median in `reports/RESULTS.md`) by
+definition, so its reviews and delivery record are a short sample even after being pulled toward
+the marketplace average. It means "good so far and not yet visible": a lead worth a visibility
+test, not a verdict. The Stronger evidence and Early signal tiers say how thin each one is, and
+the way to find out is to give a few of them exposure and watch whether the record holds as
+orders accumulate.
+
+**16. Why does Promote fire on only about half of the hidden gems?**
+`reports/RESULTS.md` lists the outcome of every hidden gem. Most of the others stay Keep because
+their risk score is at or above the cut-off of rule R08 (the broader Promote tier), a few are
+Feature because a higher-priority rule outranks Promote, and a few are Warn for the same reason.
+Promote is intentionally not gated on delivered orders: a gem with 5 or more items sold but fewer
+than 3 delivered orders can still be Promote, which is a known limitation, accepted because
+Promote is a directional visibility suggestion that carries its evidence tier and is not a
+penalty.
+
+**17. What would you do next with real data?**
+Replace the synthetic clickstream and calls with logged events and real call records; retrain
+the late-risk model on a rolling window with a time-based test and track drift, since it showed
+no forward-looking skill; add the inputs the dataset lacks (carrier, promised versus actual
+transit time per route); run a controlled visibility test on a sample of hidden gems before
+promoting more; send Suspend and Warn recommendations to a person for review instead of acting
+automatically; and recalibrate every percentile-based threshold whenever the model or the data
+changes, which the drift tests are there to flag.

@@ -556,6 +556,17 @@ script. The 17 entrants are the one place worth knowing: 5 of them sit just belo
 marketplace mean on reviews and qualify on a near-perfect delivery record.
 
 
+**Known limitation: ties between reviews of one order.** `review_creation_date` holds a date
+without a time, so two reviews of one order can share the latest date (154 delivered orders; in 17
+of them the two scores differ). The pipeline keeps whichever of the tied reviews its sort leaves
+first: deterministic (reruns are byte-identical) but arbitrary. A sandbox run that breaks ties by
+answer time instead changed 26 item rows in those 17 orders, the average review of 13 sellers and
+the quality score of nearly every seller by at most 0.02 (mean -0.00001, from the shared
+min-max scaling); it left every recommendation, the 437 gems, their tiers, the quadrant counts and
+the Choice top 10 unchanged and swapped the labels of 2 sellers. The fix was not applied (owner
+decision, 2026-10-18) so the finished Power BI report stays consistent with the database; the
+marketplace averages differ only from the fifth decimal.
+
 ## 9. Order-grouped evaluation and out-of-fold late risk (Stage 6)
 
 Sections 5 and 5b above describe the late-risk thresholds as they were calibrated against the

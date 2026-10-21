@@ -204,7 +204,9 @@ def test_intelligence_kpis_match_fact_table_and_synthetic_is_tagged(real_outputs
     assert round(per_order, 2) != round(per_item, 2)
     assert metrics["Average review score"] == f"{per_order:.2f} / 5"
     review_kpi = next(m for m in at.metric if m.label == "Average review score")
-    assert f"{per_item:.2f}" in review_kpi.help and "one review per order" in review_kpi.help
+    distinct = fact.drop_duplicates("order_id")["review_score"].mean()
+    assert f"{per_item:.2f}" in review_kpi.help and f"{distinct:.2f}" in review_kpi.help
+    assert "one review per seller-order pair" in review_kpi.help
     text = _markdown(at)
     assert text.count('class="tag">Synthetic data') >= 2  # funnel and call sections
     assert any("no audio and no speech recognition" in c.value for c in at.caption)

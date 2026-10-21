@@ -21,7 +21,9 @@ def clean(value: float, decimals: int) -> float:
 
 
 def fmt_int(value: float) -> str:
-    """A whole number with thousands separators, e.g. `110,189`."""
+    """A whole number with thousands separators, e.g. `110,189`; an en dash if missing."""
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return "–"
     return f"{int(round(float(value))):,}"
 
 

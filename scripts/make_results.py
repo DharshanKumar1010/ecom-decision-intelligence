@@ -69,17 +69,19 @@ def _marketplace_section() -> list[str]:
         config.PROCESSED_DATA_DIR / "FactOrderItems.parquet",
         columns=["order_id", "seller_id", "price", "is_late", "review_score"],
     )
-    per_order = float(ahp.seller_order_table(fact)["review"].mean())
+    per_pair = float(ahp.seller_order_table(fact)["review"].mean())
     per_item = float(fact["review_score"].mean())
+    per_order = float(fact.drop_duplicates("order_id")["review_score"].mean())
     return [
         "## Marketplace (real Olist data)",
         "",
         f"{fact['order_id'].nunique():,} delivered orders, {len(fact):,} items sold, item revenue "
         f"R$ {fact['price'].sum():,.2f} (excluding freight), late-delivery rate "
-        f"{fact['is_late'].mean() * 100:.2f}% of items. Average review per reviewed order: "
-        f"**{per_order:.2f}** (one review per order, counted once for each seller in the order, "
-        f"the definition behind every seller's average review); counting a review once per item "
-        f"would give {per_item:.2f}, which is not used. Source `FactOrderItems.parquet`.",
+        f"{fact['is_late'].mean() * 100:.2f}% of items. Average review per seller-order pair: "
+        f"**{per_pair:.2f}** (one review per pair, an order with items from two sellers counts "
+        f"once for each seller; the definition behind every seller's average review). Averaged "
+        f"over distinct reviewed orders it is {per_order:.2f}; counting a review once per item "
+        f"would give {per_item:.2f}. Only the first is used. Source `FactOrderItems.parquet`.",
         "",
     ]
 
@@ -272,6 +274,30 @@ def _tables_section() -> list[str]:
     ]
 
 
+def _gem_outcomes_line(gems: pd.DataFrame) -> str:
+    """What the expert system finally recommends for the hidden gems, and why most do not Promote."""
+    facts = pd.read_parquet(config.PROCESSED_DATA_DIR / "SellerFacts.parquet")
+    recs = pd.read_csv(config.REPORTS_DIR / "seller_recommendations.csv")
+    kb = expert.KnowledgeBase.from_yaml(config.RULES_DIR / "seller_rules.yaml")
+    r08 = next(r for r in kb.rules if r.id == "R08")
+    cutoff = float(next(c.value for c in r08.conditions if c.fact == "avg_late_risk"))
+    merged = gems[["seller_id", "confidence"]].merge(
+        recs[["seller_id", "action"]], on="seller_id"
+    ).merge(facts[["seller_id", "avg_late_risk", "order_volume", "n_orders"]], on="seller_id")
+    acts = merged["action"].value_counts()
+    promote = merged[merged["action"] == "Promote"]
+    return (
+        f"Final recommendation of the {len(merged):,} hidden gems: "
+        + ", ".join(f"{a} {int(acts.get(a, 0)):,}" for a in ("Promote", "Keep", "Feature", "Warn"))
+        + f". Of the {len(promote):,} Promote gems {int((promote['confidence'] == 'normal').sum()):,} "
+        f"have stronger evidence and {int((promote['confidence'] == 'low').sum()):,} an early signal; "
+        f"{int((promote['n_orders'] < 3).sum()):,} have fewer than 3 delivered orders (Promote is not "
+        f"gated on orders). {int((merged['avg_late_risk'] >= cutoff).sum()):,} gems have a risk score at "
+        f"or above R08's cut-off ({cutoff:g}). Median items sold of a hidden gem: "
+        f"{merged['order_volume'].median():g}."
+    )
+
+
 def _sellers_section() -> list[str]:
     quad = pd.read_csv(config.REPORTS_DIR / "discovery_quadrants.csv")
     ranking = pd.read_csv(config.REPORTS_DIR / "ahp_ranking.csv")
@@ -297,6 +323,8 @@ def _sellers_section() -> list[str]:
         f"Hidden gems by evidence: {int(tiers.get('normal', 0)):,} with at least "
         f"{config.DISCOVERY_CONFIDENCE_MIN_ORDERS} items sold (stronger evidence), "
         f"{int(tiers.get('low', 0)):,} with fewer (early signal). Hidden gems are directional, not proven.",
+        "",
+        _gem_outcomes_line(gems),
         "",
         "### Empirical-Bayes shrinkage of the quality score",
         "",

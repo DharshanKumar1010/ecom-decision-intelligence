@@ -79,6 +79,10 @@ The old hand-imported `DimCustomer` and `DimProduct` were replaced.
   delivered orders (R01, R02, R03, R05) and/or 3 reviewed orders (R01, R04), read from two new SellerFacts columns
   (`n_orders`, `n_reviewed`); R01's threshold re-derived (0.412 to 0.413), R03's unchanged. 8 sellers changed action; models,
   quadrants, AHP and `sql/schema.sql` byte-identical; SQL reloaded. See `docs/knowledge_engineering.md` section 11.
+- *Full audit.* Independent recomputation from the raw files matched every count and rate (one tie-break limitation on 17 orders'
+  reviews, documented, not changed), the rules re-implemented independently matched all 2,970 actions, 12 of 12 deliberate breaks are
+  now caught by tests, a clean-room rebuild is byte-identical, and the scorecard view's `items_sold` is filled for every seller
+  (view reloaded). Details: `docs/archive/FULL_AUDIT_REPORT.md`, `docs/archive/CLAIM_REGISTER.md`.
 
 ## Corrections that mattered
 

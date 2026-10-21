@@ -273,3 +273,48 @@ def test_power_bi_expected_values_equal_the_files() -> None:
     ]
     for cell in expected:
         assert cell in doc, cell
+
+
+# --------------------------------------------------------------------------
+# The five hard questions in docs/DEMO_SCRIPT.md quote the same figures as RESULTS.md
+# --------------------------------------------------------------------------
+
+
+@needs_outputs
+def test_hard_questions_quote_figures_that_match_results_and_the_files() -> None:
+    import pandas as pd
+
+    demo, res = _demo_text(), _read(RESULTS)
+    section = demo.split("## Five hard questions", 1)[1]
+    quad = pd.read_csv(config.REPORTS_DIR / "discovery_quadrants.csv")
+    gems = quad[quad["quadrant"] == "Hidden Gem"]
+    median_items = float(quad["order_volume"].median())
+
+    # question 15: every gem is below the pool median (18) and the median is the one quoted
+    assert f"fewer than {int(median_items)} items sold" in section
+    assert gems["order_volume"].max() < median_items
+
+    # question 16: "about half" is the Promote share of the hidden gems in RESULTS.md
+    pattern = r"Final recommendation of the [\d,]+ hidden gems: Promote (\d+),"
+    promote = int(_one(pattern, res, "promote"))
+    assert 0.4 < promote / len(gems) < 0.6, "'about half' no longer describes the Promote share"
+    assert "about half of the hidden gems" in section
+    assert int(_one(r"(\d+) have fewer than 3 delivered orders \(Promote is not", res, "thin")) >= 0
+    assert "not gated on delivered orders" in section
+
+    # question 13: the AUCs and the temporal result match RESULTS.md
+    _, rf_oof = _model_row(res, "random_forest")
+    dt_test, _ = _model_row(res, "decision_tree")
+    lr_test, _ = _model_row(res, "logistic_regression")
+    rf_test, _ = _model_row(res, "random_forest")
+    assert f"about {float(rf_test) * 100:.0f}%" in section
+    assert f"against {float(dt_test) * 100:.0f}% for the tree" in section
+    assert f"{float(lr_test) * 100:.0f}% for the linear model" in section
+    row = r"\| {} \| (0\.\d{{4}}) \| (0\.\d{{4}}) \| (0\.\d{{4}}) \|"
+    with_cal = re.search(row.format("all 12 features"), res)
+    assert with_cal
+    lr_w, dt_w, rf_w = (_two(g) for g in with_cal.groups())
+    assert f"forest {rf_w}, tree {dt_w}, linear\nmodel {lr_w}".replace("\n", " ") in section
+    late_train = float(_one(r"Late rate (\d\.\d+)% in the training period", res, "train late"))
+    late_test = float(_one(r"against (\d\.\d+)% in the test period", res, "test late"))
+    assert f"({late_test:.1f}% against {late_train:.1f}%)" in section

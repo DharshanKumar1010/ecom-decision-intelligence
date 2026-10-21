@@ -40,7 +40,8 @@ single source of numbers) are complete and verified. History: `BUILD_LOG.md`, fu
   **No neural networks, SVM or KNN anywhere** (code, dependencies, comments, docs). Any other model family
   needs the evidence-then-ask-then-confirm process that adopted the forest.
 - **Do not silently expand the feature set or swap the model family.** The 12 features are exactly
-  `config.ALLOWED_FEATURES`; no date or delivery-derived column may enter (target leakage).
+  `config.ALLOWED_FEATURES`; no column derived from the delivered or estimated dates, `delivery_days`, the reviews or the
+  target may enter (target leakage). The purchase month and weekday are allowed: they are known when the order is placed.
 - **Only features Claude Code can build and verify from the terminal.** No GUI-only steps, paid APIs
   or network calls at run time (after `pip install`).
 - **Scope: seven syllabus-anchored topics** (section 2). No extra topics unless asked. Out of scope:
@@ -51,7 +52,8 @@ single source of numbers) are complete and verified. History: `BUILD_LOG.md`, fu
   real run. Do not type a number that a file already holds; read it (or point to `reports/RESULTS.md`).
 - **Never claim confidence a small sample does not support.** Hidden gems have few items sold, so each carries
   an evidence tier ("Stronger evidence" or "Early signal"); they are directional, never presented with the
-  certainty of the main AHP ranking. Warn and Suspend rules need at least 5 items sold (section 7.4).
+  certainty of the main AHP ranking. Warn and Suspend rules need at least 5 items sold and independent orders (3 delivered, and 3 reviewed
+  where they read the average review; section 7.4).
 - **Wording about the risk score.** `late_risk` is an out-of-fold **ranking score, not a probability** and not
   "calibrated" (balanced class weights put its median far above the real late rate). The model has **no
   forward-looking skill** (temporal check at or below chance): never say it forecasts or predicts future
@@ -154,10 +156,13 @@ record. Criteria are normalised into `norm_*` columns **added alongside the raw 
 (an earlier bug). `compute_weights` is reused by `discovery.py`.
 
 7.4 **`expert.py` + `rules/seller_rules.yaml`**: knowledge base, working memory (`ahp_score`, `avg_late_risk`,
-`avg_review` as one review per distinct order, `order_volume` as items sold, `late_rate`, `is_hidden_gem`), inference
+`avg_review` as one review per distinct order, `order_volume` as items sold, `late_rate`, `is_hidden_gem`, `n_orders`
+(distinct delivered orders) and `n_reviewed` (distinct reviewed orders)), inference
 (highest priority wins, ties by rule id) and explanation. Twelve rules R01-R12 with actions Keep, Warn, Suspend, Feature,
-Promote and a default (R12). **Minimum evidence: every Warn and Suspend rule requires `order_volume >= 5`**, so a seller with
-fewer than 5 items sold can only be Keep ("pending more data"). Percentile-intent thresholds were set on the
+Promote and a default (R12). **Minimum evidence: every Warn and Suspend rule requires `order_volume >= 5` (items sold) and independent orders**
+(`n_orders >= 3` for R01, R02, R03 and R05; `n_reviewed >= 3` for R01 and R04), because items of one order are not
+independent evidence. A seller with fewer than 5 items sold or fewer than 3 delivered orders can only be Keep
+("pending more data"). Promote is deliberately not gated on orders (a directional suggestion that carries its evidence tier). Percentile-intent thresholds were set on the
 population each rule applies to (R01 and R03 on sellers with at least 5 items sold). The reasoning per rule and per
 recalibration is in `docs/knowledge_engineering.md`; current thresholds and fire counts are in `reports/RESULTS.md`. A drift test
 fails if a threshold stops discriminating or R01/R03 leave their percentile.
@@ -217,10 +222,10 @@ python scripts/make_results.py [--check]       # regenerate / check reports/RESU
 
 ## 11. Known pitfalls
 
-- Date columns or `delivery_days` as features (leakage); fitting scalers or imputers on all data; metrics on training data;
+- Delivered or estimated dates, `delivery_days`, review fields or the target as features (leakage); fitting scalers or imputers on all data; metrics on training data;
   accuracy as the headline on an imbalanced target (lead with ROC-AUC); item-level random splits.
 - Scoring VADER on stripped text; unjustified or never-firing rules; hard-coded paths, seeds, thresholds or numbers.
-- Presenting a low-item-count hidden gem with the certainty of an established seller; warning or suspending on fewer than 5 items sold.
+- Presenting a low-item-count hidden gem with the certainty of an established seller; warning or suspending on fewer than 5 items sold or fewer than 3 delivered orders.
 - Calling the risk score a probability, "calibrated", or a forecast; saying "orders" for items sold.
 - Overwriting raw criterion columns during normalisation; implying Olist has food or nutrition data.
 - Quoting a number from memory or an old document instead of `reports/RESULTS.md`.

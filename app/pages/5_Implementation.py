@@ -17,7 +17,7 @@ import pandas as pd
 import streamlit as st
 
 from app import _theme as theme
-from app._common import load_knowledge_base, load_parquet, load_report_csv
+from app._common import load_knowledge_base, load_parquet, load_report_csv, working_memory
 from app._components import (
     ITEMS_SOLD_NOTE,
     footer,
@@ -38,7 +38,6 @@ from src.expert import (
     InferenceResult,
     KnowledgeBase,
     Rule,
-    WorkingMemory,
 )
 
 set_page("Implementation")
@@ -52,9 +51,11 @@ _NO_EXAMPLE = "Choose an outcome…"
 _DEFAULT_RULE = "R12"
 
 
-def _num(value: object) -> float | None:
-    """NaN -> None (a missing fact), otherwise float."""
-    return None if pd.isna(value) else float(value)
+def _items_phrase(count: object) -> str:
+    """`1 item sold`, `5 items sold`, or `items sold unknown` for a missing count."""
+    if pd.isna(count):
+        return "items sold unknown"
+    return f"{fmt_int(count)} {'item' if int(count) == 1 else 'items'} sold"  # type: ignore[call-overload]
 
 
 def _reviewed_orders(facts: pd.DataFrame) -> pd.Series:
@@ -127,7 +128,7 @@ def _selector(facts: pd.DataFrame, recommendations: pd.DataFrame) -> str:
         chosen = st.selectbox(
             f"Seller (all {len(seller_ids):,}; type to search)",
             seller_ids,
-            format_func=lambda sid: f"{short_id(sid)} · {int(orders[sid])} items sold",
+            format_func=lambda sid: f"{short_id(sid)} · {_items_phrase(orders[sid])}",
             key=_SELLER_KEY,
         )
     with right:
@@ -289,24 +290,14 @@ def render() -> None:
 
     seller_id = _selector(facts, recommendations)
     row = facts.loc[facts["seller_id"] == seller_id].iloc[0]
-    memory = WorkingMemory(
-        seller_id=seller_id,
-        ahp_score=_num(row["ahp_score"]),
-        avg_late_risk=_num(row["avg_late_risk"]),
-        avg_review=_num(row["avg_review"]),
-        order_volume=_num(row["order_volume"]),
-        late_rate=_num(row["late_rate"]),
-        is_hidden_gem=bool(row["is_hidden_gem"]),
-        n_orders=_num(row["n_orders"]),
-        n_reviewed=_num(row["n_reviewed"]),
-    )
+    memory = working_memory(seller_id, row)
     result = InferenceEngine(kb).run(memory.as_facts())
     action = result.fired_rule.action
     subtitle(_SUBTITLE, explain.ACTION_MEANING.get(action, "See the reason below."))
 
     _result_block(result)
     review = "n/a" if pd.isna(row["avg_review"]) else fmt_num(row["avg_review"], 2)
-    orders = (int(row["n_orders"]), int(row["n_reviewed"]))
+    orders = (row["n_orders"], row["n_reviewed"])
     kpis([
         ("Items sold", fmt_int(row["order_volume"]), None),
         ("Average review", review, "Average review score (1 to 5), one review per order."),

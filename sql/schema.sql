@@ -238,6 +238,8 @@ GO
 -- Sellers missing from a model table (for example the 2,414 sellers below the
 -- 30-item AHP threshold) keep their row with NULLs in that table's columns.
 -- The two score columns are different scores (30+ items vs 5+ items): keep both.
+-- items_sold counts every seller's items in FactOrderItems (0 for a seller with no delivered
+-- item), not the Discovery pool's order_volume, which is empty below 5 items sold.
 CREATE VIEW dbo.vw_SellerScorecard AS
 SELECT
     s.seller_id,
@@ -249,7 +251,7 @@ SELECT
     a.on_time_rate_raw,
     a.n_orders           AS established_n_orders,
     q.ahp_score          AS ahp_score_discovery,
-    q.order_volume       AS items_sold,
+    COALESCE(i.items, 0) AS items_sold,
     q.quadrant,
     q.confidence,
     r.action             AS recommended_action,
@@ -258,5 +260,7 @@ SELECT
 FROM dbo.DimSeller AS s
 LEFT JOIN dbo.AhpRanking            AS a ON a.seller_id = s.seller_id
 LEFT JOIN dbo.DiscoveryQuadrants    AS q ON q.seller_id = s.seller_id
-LEFT JOIN dbo.SellerRecommendations AS r ON r.seller_id = s.seller_id;
+LEFT JOIN dbo.SellerRecommendations AS r ON r.seller_id = s.seller_id
+LEFT JOIN (SELECT seller_id, CAST(COUNT_BIG(*) AS int) AS items
+           FROM dbo.FactOrderItems GROUP BY seller_id) AS i ON i.seller_id = s.seller_id;
 GO

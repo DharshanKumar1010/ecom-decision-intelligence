@@ -422,7 +422,18 @@ def test_funnel_percentages_show_two_decimals_and_counts_have_separators(
 
 def test_intelligence_average_review_kpi_equals_results_md(real_outputs: None) -> None:
     results = (config.REPORTS_DIR / "RESULTS.md").read_text(encoding="utf-8")
-    match = re.search(r"Average review per reviewed order: \*\*(\d\.\d\d)\*\*", results)
+    match = re.search(r"Average review per seller-order pair: \*\*(\d\.\d\d)\*\*", results)
     assert match, "RESULTS.md has no marketplace average review"
-    kpi = {m.label: m.value for m in _run("Intelligence").metric}["Average review score"]
-    assert kpi == f"{match.group(1)} / 5"
+    metrics = {m.label: m for m in _run("Intelligence").metric}
+    kpi = metrics["Average review score"]
+    assert kpi.value == f"{match.group(1)} / 5"
+    # the tooltip names the definition used and gives the two alternatives from RESULTS.md
+    distinct = re.search(r"distinct reviewed orders it is (\d\.\d\d)", results)
+    per_item = re.search(r"once per item would give (\d\.\d\d)", results)
+    assert distinct and per_item
+    assert "seller-order pair" in kpi.help
+    assert f"distinct reviewed orders it is {distinct.group(1)}" in kpi.help
+    assert f"once for every item it would be {per_item.group(1)}" in kpi.help
+    fact = pd.read_parquet(config.PROCESSED_DATA_DIR / "FactOrderItems.parquet",
+                           columns=["review_score"])
+    assert f"{fact['review_score'].isna().mean() * 100:.2f}% of items have no review" in kpi.help

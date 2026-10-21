@@ -155,7 +155,8 @@ def render() -> None:
     )
     late = float(fact["is_late"].mean())
     orders = fact["order_id"].nunique()
-    review_per_order, review_per_item = marketplace_review()
+    review_per_pair, review_per_item, review_per_order = marketplace_review()
+    no_review = float(fact["review_score"].isna().mean())
     subtitle(_SUBTITLE,
              f"{fmt_int(orders)} delivered orders; {fmt_pct(late, 1)} of items arrived late.")
     kpis([
@@ -164,10 +165,12 @@ def render() -> None:
          "Sum of item prices in Brazilian reais, excluding freight."),
         ("Late-delivery rate", fmt_pct(late, 2),
          "Share of order items delivered after the estimated date."),
-        ("Average review score", f"{fmt_num(review_per_order, 2)} / 5",
-         "Mean review per reviewed order: one review per order, counted once for each seller "
-         "in the order. Counting a review once for every item of its order would give "
-         f"{fmt_num(review_per_item, 2)}; about 0.75% of items have no review."),
+        ("Average review score", f"{fmt_num(review_per_pair, 2)} / 5",
+         "Mean of one review per seller-order pair (an order with items from two sellers counts "
+         "once for each seller): the definition behind every seller's average review. Averaged "
+         f"over distinct reviewed orders it is {fmt_num(review_per_order, 2)}; counting a review "
+         f"once for every item it would be {fmt_num(review_per_item, 2)}. "
+         f"{fmt_pct(no_review, 2)} of items have no review."),
     ])
     section("Where visitors drop out", synthetic=True)
     show(_funnel_chart(funnel))

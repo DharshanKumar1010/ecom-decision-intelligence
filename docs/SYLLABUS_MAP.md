@@ -18,6 +18,21 @@ exists; `tests/test_results.py` fails if one is renamed or a listed function dis
 "Healthier" in the hidden-gems discussion means sound business quality (good reviews, reliable
 delivery). Olist has no food or nutrition data.
 
+## Syllabus topics not implemented by decision
+
+Some topics in the wider course are covered by theory only, on purpose, and no code in this project
+implements them. This map does not claim them.
+
+- **Neural networks, support vector machines and the nearest-neighbour method.** Excluded by an
+  owner decision recorded in `CLAUDE.md` (hard constraints). The predictive models are a random forest,
+  a decision tree and a logistic regression; the first needed an evidence-then-confirm step to be
+  adopted (history in `BUILD_LOG.md`, Stage 3 and 3.5).
+- **Competitive intelligence, linear programming, expected-value decision trees, maps, PDF reports and
+  Docker.** Out of scope for the Python layer; no file implements them.
+
+If a reviewer asks about one of these, the honest answer is that it is a taught topic this project
+does not build.
+
 ## DSS subsystems
 
 | Subsystem | Files |

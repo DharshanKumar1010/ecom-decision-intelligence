@@ -25,11 +25,36 @@ import streamlit as st
 from app._labels import with_tier_labels
 from src import config
 from src.ahp import seller_order_table
-from src.expert import KnowledgeBase
+from src.expert import KnowledgeBase, WorkingMemory
 
 # --------------------------------------------------------------------------
 # Cached loaders
 # --------------------------------------------------------------------------
+
+
+def _num(value: object) -> float | None:
+    """NaN or missing -> None (a missing fact, which never matches a rule), otherwise float."""
+    return None if pd.isna(value) else float(value)  # type: ignore[arg-type]
+
+
+def working_memory(seller_id: str, row: pd.Series) -> WorkingMemory:
+    """The facts the Implementation page feeds its live rule engine, from one `SellerFacts` row.
+
+    Every fact the batch engine reads (`src.expert._facts_from_row`) must be passed here, or the
+    live outcome would silently differ from the stored recommendation; `tests/test_app_polish.py`
+    compares the two for every seller.
+    """
+    return WorkingMemory(
+        seller_id=seller_id,
+        ahp_score=_num(row["ahp_score"]),
+        avg_late_risk=_num(row["avg_late_risk"]),
+        avg_review=_num(row["avg_review"]),
+        order_volume=_num(row["order_volume"]),
+        late_rate=_num(row["late_rate"]),
+        is_hidden_gem=bool(row["is_hidden_gem"]),
+        n_orders=_num(row["n_orders"]),
+        n_reviewed=_num(row["n_reviewed"]),
+    )
 
 
 def data_key(path: Path) -> tuple[str, float]:
@@ -114,17 +139,20 @@ _FACT_COLUMNS = ("order_id", "seller_id", "review_score", "is_late")
 
 
 @st.cache_data(show_spinner=False)
-def _marketplace_review(path: str, mtime: float) -> tuple[float, float]:
+def _marketplace_review(path: str, mtime: float) -> tuple[float, float, float]:
     fact = pd.read_parquet(path, columns=list(_FACT_COLUMNS))
-    per_order = float(seller_order_table(fact)["review"].mean())
-    return per_order, float(fact["review_score"].mean())
+    per_pair = float(seller_order_table(fact)["review"].mean())
+    distinct = float(fact.drop_duplicates("order_id")["review_score"].mean())
+    return per_pair, float(fact["review_score"].mean()), distinct
 
 
-def marketplace_review() -> tuple[float, float]:
-    """`(mean review per reviewed order, mean review per item)` for the whole marketplace.
+def marketplace_review() -> tuple[float, float, float]:
+    """`(per seller-order pair, per item, per distinct order)` mean review, whole marketplace.
 
-    The first uses one review per order (the definition behind every seller's average review);
-    the second counts a review once for each item of its order and is shown only for contrast.
+    The first has one review per (seller, order) pair, the definition behind every seller's average
+    review (an order with items from two sellers counts once for each of them). The second counts a
+    review once for each item of its order and the third once per distinct reviewed order; both are
+    shown only for contrast.
     """
     return _marketplace_review(*data_key(processed_path("FactOrderItems.parquet")))
 

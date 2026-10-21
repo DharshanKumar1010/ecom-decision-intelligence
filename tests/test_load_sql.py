@@ -67,6 +67,16 @@ def test_schema_parses_into_the_ten_tables_and_the_view(schema: load_sql.Schema)
     assert "CREATE VIEW dbo.vw_SellerScorecard" in schema.view_batch
 
 
+def test_the_view_counts_every_sellers_items_from_the_fact_table(schema: load_sql.Schema) -> None:
+    """items_sold must not come from the 5+ items pool (it was NULL for 1,231 sellers)."""
+    view = " ".join(schema.view_batch.split())
+    assert "COALESCE(i.items, 0) AS items_sold" in view
+    assert "q.order_volume" not in view
+    assert "FROM dbo.FactOrderItems GROUP BY seller_id" in view
+    assert "FactOrderItems" in load_sql.VIEW_SOURCE_TABLES
+    load_sql.assert_statement_allowed(schema.view_batch)  # the allow-list accepts the new join
+
+
 def test_every_table_has_columns_and_a_key(schema: load_sql.Schema) -> None:
     for name, ddl in schema.tables.items():
         assert ddl.columns, name
@@ -475,3 +485,30 @@ def test_loaded_database_matches_csvs() -> None:
         pytest.skip("database reachable but not all tables are loaded yet")
     bad = [(r.table, r.detail) for r in results if r.status != "OK"]
     assert not bad, bad
+
+
+@pytest.mark.sql_server
+@needs_exports
+def test_scorecard_view_has_an_items_sold_for_every_seller() -> None:
+    try:
+        conn = load_sql.connect(load_sql.DEFAULT_SERVER, load_sql.ALLOWED_DATABASE)
+    except (LoaderError, SafetyError) as exc:
+        pytest.skip(f"no reachable SQL Server: {exc}")
+    try:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT COUNT_BIG(*) FROM dbo.vw_SellerScorecard WHERE items_sold IS NULL"
+            )
+            nulls = int(cursor.fetchone()[0])
+            cursor.execute(
+                "SELECT COUNT_BIG(*) FROM dbo.vw_SellerScorecard v JOIN (SELECT seller_id, "
+                "COUNT_BIG(*) AS n FROM dbo.FactOrderItems GROUP BY seller_id) f "
+                "ON f.seller_id = v.seller_id WHERE v.items_sold <> f.n"
+            )
+            wrong = int(cursor.fetchone()[0])
+        except Exception as exc:  # view not (re)loaded yet
+            pytest.skip(f"view not readable: {exc}")
+    finally:
+        conn.close()
+    assert nulls == 0 and wrong == 0

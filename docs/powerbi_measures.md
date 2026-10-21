@@ -30,6 +30,23 @@ Notes:
   the number.
 - Clickstream and call-sentiment visuals must say the data is synthetic.
 
+## Expected values (verified in SQL)
+
+Computed with read-only SELECT statements against `EcomDecisionIntelligence` after the last load
+(the same numbers as the table above, so the files, the database and the DAX agree). A card with
+no filter must show exactly these values and formats; a difference means a filter, a stale
+refresh or a wrong relationship.
+
+| Measure | SQL used (read-only) | Verified value |
+|---|---|---|
+| Delivered Orders | `COUNT(DISTINCT order_id)` over FactOrderItems | 96,470 |
+| Items Sold | `COUNT(*)` over FactOrderItems | 110,189 |
+| Revenue | `SUM(price)` over FactOrderItems | R$ 13,220,248.93 |
+| Late Rate | `SUM(is_late) / COUNT(*)` over FactOrderItems | 7.91% |
+| Avg Late Risk Score | `AVG(late_risk)` over LatePredictions | 0.361 |
+| Hidden Gems | rows of DiscoveryQuadrants with quadrant = 'Hidden Gem' | 437 |
+| Sellers Ranked | rows of AhpRanking | 681 |
+
 ## Relationships to expect in Model view
 
 These are the eight foreign keys declared in `sql/schema.sql`, which Power BI should detect on load. In

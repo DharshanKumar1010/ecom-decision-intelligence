@@ -78,7 +78,7 @@ TABLES: tuple[str, ...] = (
 )
 VIEW_NAME = "vw_SellerScorecard"
 VIEW_SOURCE_TABLES: frozenset[str] = frozenset(
-    {"DimSeller", "AhpRanking", "DiscoveryQuadrants", "SellerRecommendations"}
+    {"DimSeller", "AhpRanking", "DiscoveryQuadrants", "SellerRecommendations", "FactOrderItems"}
 )
 CSV_FILES: dict[str, str] = {
     "DimSeller": "DimSeller.csv",
